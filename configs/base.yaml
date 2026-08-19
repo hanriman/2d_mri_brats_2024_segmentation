@@ -1,0 +1,10 @@
+seed: 42
+device: "auto"
+num_workers: 0
+
+paths:
+  metadata_csv: "data/processed/2d_slices/metadata.csv"
+  output_dir: "outputs"
+  checkpoints_dir: "outputs/checkpoints"
+  figures_dir: "outputs/figures"
+  metrics_dir: "outputs/metrics"

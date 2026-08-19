@@ -1,0 +1,9 @@
+name: "BraTS2D"
+img_size: 240
+in_channels: 4 # T1, T1c, T2, FLAIR
+out_channels: 1 # Binary tumor segmentation
+modalities: ["T1", "T1c", "T2", "FLAIR"]
+batch_size: 8
+train_split: "train"
+val_split: "val"
+test_split: "test"

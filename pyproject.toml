@@ -1,0 +1,41 @@
+[project]
+name = "brats-jepa"
+version = "0.1.0"
+description = "Self-Supervised Representation Learning on 2D BraTS Glioma MRI: Comparing I-JEPA, SigReg JEPA, VisReg JEPA, and UNet"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11.1",
+    "monai>=1.6.0",
+    "nibabel>=5.4.2",
+    "numpy>=2.5.2",
+    "pandas>=3.0.5",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.18.0",
+    "seaborn>=0.13.2",
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "tqdm>=4.70.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

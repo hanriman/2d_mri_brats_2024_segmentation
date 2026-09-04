@@ -74,11 +74,12 @@ thesis_2d/
 │   ├── generate_figures.py    # Publication plot generator
 │   └── run_full_pipeline.py   # Master automation pipeline runner with versioning support
 │
-├── tests/                     # Automated pytest suite (12 tests passing)
+├── tests/                     # Automated pytest suite (18 tests passing)
 │   ├── conftest.py
 │   ├── test_data.py
 │   ├── test_models.py
-│   └── test_losses.py
+│   ├── test_losses.py
+│   └── test_metrics.py
 │
 ├── docs/                      # Technical documentation & reference specifications
 │   └── model_architectures.md # Complete model architecture specifications and tensor dimensions

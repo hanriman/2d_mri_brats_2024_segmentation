@@ -6,9 +6,9 @@ embed_dim: 384
 encoder_depth: 8
 predictor_depth: 4
 num_heads: 6
-ema_decay: 0.996
 target_scale: [0.15, 0.25]
 context_scale: [0.85, 1.0]
 num_target_masks: 4
-visreg_weight: 1.0
-spatial_reg_weight: 0.5
+var_weight: 1.0
+swd_weight: 1.0
+num_projections: 256

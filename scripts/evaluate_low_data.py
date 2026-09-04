@@ -119,9 +119,22 @@ def main():
         frac_tag = f"{int(round(frac*100))}pct"
         n_samples = max(1, int(round(frac * total_train_samples)))
         
-        # Seeded random sampling across training dataset
+        # Seeded stratified sampling across training dataset to preserve positive tumor ratio
         rng = np.random.RandomState(args.seed)
-        indices = rng.choice(total_train_samples, size=n_samples, replace=False).tolist()
+        tumor_indices = [i for i, r in enumerate(full_train_ds.records) if r.get("has_tumor", True) in (True, "True", 1, "1")]
+        non_tumor_indices = [i for i in range(total_train_samples) if i not in set(tumor_indices)]
+        
+        if len(tumor_indices) > 0 and len(non_tumor_indices) > 0:
+            tumor_frac = len(tumor_indices) / total_train_samples
+            n_tumor = max(1, int(round(n_samples * tumor_frac))) if n_samples > 1 else 1
+            n_non_tumor = max(0, n_samples - n_tumor)
+            
+            chosen_tumor = rng.choice(tumor_indices, size=min(n_tumor, len(tumor_indices)), replace=False).tolist()
+            chosen_non_tumor = rng.choice(non_tumor_indices, size=min(n_non_tumor, len(non_tumor_indices)), replace=False).tolist() if n_non_tumor > 0 else []
+            indices = chosen_tumor + chosen_non_tumor
+            rng.shuffle(indices)
+        else:
+            indices = rng.choice(total_train_samples, size=n_samples, replace=False).tolist()
         
         sub_train_ds = Subset(full_train_ds, indices)
         train_loader = DataLoader(

@@ -26,6 +26,7 @@ class BraTS2DnnUNet(nn.Module):
             act_name="leakyrelu",
             deep_supervision=deep_supervision,
             deep_supr_num=3,
+            res_block=True,
         )
 
     def forward(self, x: torch.Tensor):

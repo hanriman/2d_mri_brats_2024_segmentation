@@ -6,46 +6,60 @@ from torch import nn
 from .ijepa_loss import IJEPALoss
 
 
+class EppsPulleyGaussianityTest(nn.Module):
+    """
+    Epps-Pulley goodness-of-fit test statistic comparing 1D empirical characteristic function
+    against standard normal characteristic function phi(t) = exp(-t^2 / 2).
+    Uses trapezoidal quadrature over [0, t_max] with symmetry doubling.
+    Reference: LeJEPA (Balestriero & LeCun, 2025, arXiv:2511.08544).
+    """
+    def __init__(self, t_max: float = 3.0, n_knots: int = 17):
+        super().__init__()
+        t = torch.linspace(0.0, t_max, n_knots, dtype=torch.float32)
+        dt = t_max / (n_knots - 1)
+        weights = torch.full((n_knots,), 2.0 * dt, dtype=torch.float32)
+        weights[[0, -1]] = dt
+        phi = torch.exp(-0.5 * t.square())
+        self.register_buffer("t", t)
+        self.register_buffer("phi", phi)
+        self.register_buffer("weights", weights * phi)
+
+    def forward(self, proj: torch.Tensor) -> torch.Tensor:
+        """
+        proj: [N, K] where N is number of samples, K is number of random 1D projections.
+        """
+        t = self.t.to(device=proj.device, dtype=proj.dtype)
+        phi = self.phi.to(device=proj.device, dtype=proj.dtype)
+        weights = self.weights.to(device=proj.device, dtype=proj.dtype)
+
+        x_t = proj.unsqueeze(-1) * t  # [N, K, Q]
+        ecf_real = x_t.cos().mean(dim=0)   # [K, Q]
+        ecf_imag = x_t.sin().mean(dim=0)   # [K, Q]
+        err = (ecf_real - phi).square() + ecf_imag.square()  # [K, Q]
+        statistic = (err @ weights) * proj.size(0)  # [K]
+        return statistic.mean()
+
+
 class SigRegLoss(nn.Module):
     """
-    SigReg Loss: I-JEPA prediction loss + Variance-Covariance Representation Regularization.
-    Enforces feature variance > gamma (hinge loss) and penalizes off-diagonal cross-feature covariance
-    (decorrelation). Follows VICReg-style regularization to prevent representation collapse
-    without requiring an EMA teacher.
+    SigReg Loss: I-JEPA prediction loss + Sketched Isotropic Gaussian Regularization (SIGReg).
+    Enforces that projected representations match standard isotropic Gaussian N(0, I)
+    using the Cramér-Wold theorem and the Epps-Pulley test statistic.
+    Reference: LeJEPA (Balestriero & LeCun, 2025, arXiv:2511.08544).
     """
     def __init__(
         self,
         loss_type: str = "l1",
-        var_weight: float = 1.0,
-        cov_weight: float = 0.04,
-        target_std: float = 1.0,
+        sigreg_weight: float = 1.0,
+        num_projections: int = 256,
+        t_max: float = 3.0,
+        n_knots: int = 17,
     ):
         super().__init__()
         self.jepa_loss = IJEPALoss(loss_type=loss_type)
-        self.var_weight = var_weight
-        self.cov_weight = cov_weight
-        self.target_std = target_std
-
-    def _variance_loss(self, z: torch.Tensor) -> torch.Tensor:
-        """Hinge variance loss to prevent feature dimension collapse."""
-        # z: [B*N, D]
-        # Use unbiased=False to avoid NaN when N=1
-        std_z = torch.sqrt(z.var(dim=0, unbiased=False) + 1e-4)
-        var_loss = torch.mean(F.relu(self.target_std - std_z))
-        return var_loss
-
-    def _covariance_loss(self, z: torch.Tensor) -> torch.Tensor:
-        """Penalizes off-diagonal covariance to decorrelate feature dimensions."""
-        N, D = z.shape
-        z_centered = z - z.mean(dim=0, keepdim=True)
-        # Guard against division by zero when N=1
-        cov_matrix = (z_centered.T @ z_centered) / max(N - 1, 1)
-        
-        # Zero out diagonal elements
-        diag_mask = torch.eye(D, device=z.device, dtype=torch.bool)
-        off_diag_cov = cov_matrix[~diag_mask]
-        cov_loss = (off_diag_cov ** 2).sum() / D
-        return cov_loss
+        self.sigreg_weight = sigreg_weight
+        self.num_projections = num_projections
+        self.ep_test = EppsPulleyGaussianityTest(t_max=t_max, n_knots=n_knots)
 
     def forward(
         self,
@@ -55,16 +69,22 @@ class SigRegLoss(nn.Module):
     ) -> dict[str, torch.Tensor]:
         j_loss = self.jepa_loss(predictions, targets)
         
-        # Flatten context tokens across batch and patch dimensions: [B*N_ctx, D]
+        # Flatten tokens across batch and patch dimensions: [N, D]
         z = context_tokens.reshape(-1, context_tokens.shape[-1])
+        N, D = z.shape
         
-        v_loss = self._variance_loss(z)
-        c_loss = self._covariance_loss(z)
+        # Sample M random projection directions on unit hypersphere
+        A = torch.randn(D, self.num_projections, device=z.device, dtype=z.dtype)
+        A = F.normalize(A, p=2, dim=0)  # [D, M]
         
-        total_loss = j_loss + self.var_weight * v_loss + self.cov_weight * c_loss
+        # 1D projections: [N, M]
+        proj = z @ A
+        
+        sigreg_val = self.ep_test(proj)
+        total_loss = j_loss + self.sigreg_weight * sigreg_val
+        
         return {
             "loss": total_loss,
             "jepa_loss": j_loss,
-            "var_loss": v_loss,
-            "cov_loss": c_loss,
+            "sigreg_loss": sigreg_val,
         }

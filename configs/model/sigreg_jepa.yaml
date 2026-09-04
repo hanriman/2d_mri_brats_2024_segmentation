@@ -3,13 +3,12 @@ img_size: 240
 patch_size: 16
 in_channels: 4
 embed_dim: 384
+proj_dim: 128
 encoder_depth: 8
 predictor_depth: 4
 num_heads: 6
-ema_decay: 0.996
 target_scale: [0.15, 0.25]
 context_scale: [0.85, 1.0]
 num_target_masks: 4
 sigreg_weight: 1.0
-var_weight: 1.0
-cov_weight: 0.04
+num_projections: 256

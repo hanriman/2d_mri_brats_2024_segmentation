@@ -10,7 +10,7 @@ class SigRegJEPA(nn.Module):
     """
     SigReg JEPA (LeJEPA): Heuristic-free Joint-Embedding Predictive Architecture.
     Does NOT use an EMA teacher encoder. Representation collapse is prevented mathematically
-    by Sketched Isotropic Gaussian / Variance-Covariance Regularization (SIGReg).
+    by Sketched Isotropic Gaussian Regularization (SIGReg) (Balestriero & LeCun, 2025).
     """
     def __init__(
         self,
@@ -18,17 +18,14 @@ class SigRegJEPA(nn.Module):
         patch_size: int = 16,
         in_channels: int = 4,
         embed_dim: int = 384,
+        proj_dim: int = 128,
         encoder_depth: int = 8,
         predictor_depth: int = 4,
         num_heads: int = 6,
         sigreg_weight: float = 1.0,
-        var_weight: float = 1.0,
-        cov_weight: float = 0.04,
     ):
         super().__init__()
         self.sigreg_weight = sigreg_weight
-        self.var_weight = var_weight
-        self.cov_weight = cov_weight
         
         # Single Encoder (No EMA teacher required)
         self.context_encoder = VisionTransformerEncoder2D(
@@ -40,7 +37,16 @@ class SigRegJEPA(nn.Module):
             num_heads=num_heads,
         )
         
-        # Latent Predictor
+        # Projector MLP: maps encoder representations (D=384) to compact space (D_proj=128)
+        # for isotropic Gaussian regularization, decoupling representation from collapse prevention.
+        self.projector = nn.Sequential(
+            nn.Linear(embed_dim, 1024),
+            nn.LayerNorm(1024),
+            nn.GELU(),
+            nn.Linear(1024, proj_dim),
+        )
+        
+        # Latent Predictor (operates in encoder space D=384)
         self.predictor = JEPAPredictor(
             embed_dim=embed_dim,
             pred_embed_dim=embed_dim // 2,
@@ -60,14 +66,15 @@ class SigRegJEPA(nn.Module):
     ) -> dict[str, Any]:
         B = images.shape[0]
         
-        # 1. Forward encoder on full image WITHOUT gradients to extract target representations.
-        #    This prevents self-attention leakage: if context tokens were extracted from a full-image
-        #    forward pass, they would already contain target patch information via global attention.
+        # 1. Forward encoder on full image without gradients to extract target representations.
         with torch.no_grad():
             full_tokens = self.context_encoder(images)  # [B, N_patches, D]
         
         # 2. Forward encoder on ONLY context patches WITH gradients (no attention leakage)
         context_tokens = self.context_encoder(images, patch_indices=context_indices)
+        
+        # 3. Pass context tokens through projector for SIGReg isotropic Gaussian regularization
+        projected_tokens = self.projector(context_tokens)  # [B, N_ctx, proj_dim]
             
         predictions = []
         targets = []
@@ -86,8 +93,7 @@ class SigRegJEPA(nn.Module):
             "predictions": predictions,
             "targets": targets,
             "context_tokens": context_tokens,
+            "projected_tokens": projected_tokens,
             "target_tokens": full_tokens,
             "sigreg_weight": self.sigreg_weight,
-            "var_weight": self.var_weight,
-            "cov_weight": self.cov_weight,
         }

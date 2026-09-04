@@ -16,18 +16,19 @@ from brats_jepa.utils import get_device, get_logger, set_seed
 
 
 def apply_rician_noise(img: torch.Tensor, noise_std: float = 0.15) -> torch.Tensor:
-    """Applies synthetic Rician noise to simulate low SNR / 1.5T MRI scanner acquisitions."""
-    n1 = torch.randn_like(img) * noise_std
-    n2 = torch.randn_like(img) * noise_std
-    return torch.sqrt((img + n1) ** 2 + n2 ** 2)
+    """Applies additive noise on foreground tissue to simulate low SNR / 1.5T MRI without inverting negative Z-scores."""
+    noise = torch.randn_like(img) * noise_std
+    mask = (img != 0).float()
+    return (img + noise) * mask
 
 def apply_bias_field(img: torch.Tensor, scale: float = 0.3) -> torch.Tensor:
     """Applies synthetic B1 intensity bias field to simulate coil sensitivity variations across scanner vendors."""
     B, C, H, W = img.shape
     y = torch.linspace(-1, 1, H, device=img.device).view(1, 1, H, 1)
     x = torch.linspace(-1, 1, W, device=img.device).view(1, 1, 1, W)
-    bias = 1.0 + scale * (x ** 2 + y ** 2)
-    return img * bias
+    bias_grad = scale * (x ** 2 + y ** 2 - 0.5)
+    mask = (img != 0).float()
+    return (img + bias_grad) * mask
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Out-of-Distribution (OOD) Scanner Domain Generalization Benchmark")

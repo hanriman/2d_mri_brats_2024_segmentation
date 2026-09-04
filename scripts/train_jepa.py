@@ -1,4 +1,5 @@
 import argparse
+import math
 import time
 from pathlib import Path
 
@@ -109,16 +110,22 @@ def main():
 
     if args.model_type == "ijepa":
         model = IJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384).to(device)
-        loss_fn = IJEPALoss(loss_type="smooth_l1")
+        loss_fn = IJEPALoss(loss_type="smooth_l1").to(device)
     elif args.model_type == "sigreg_jepa":
-        model = SigRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384).to(device)
-        loss_fn = SigRegLoss(var_weight=1.0, cov_weight=0.04)
+        model = SigRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
+        loss_fn = SigRegLoss(sigreg_weight=1.0, num_projections=256).to(device)
     elif args.model_type == "visreg_jepa":
         model = VisRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384).to(device)
-        loss_fn = VisRegLoss(visreg_weight=1.0, spatial_reg_weight=0.5)
+        loss_fn = VisRegLoss(var_weight=1.0, swd_weight=1.0, num_projections=256).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    warmup_epochs = min(5, max(1, args.epochs // 5)) if args.epochs >= 5 else 0
+    if warmup_epochs > 0:
+        warmup_sched = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=warmup_epochs)
+        cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - warmup_epochs)
+        scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_sched, cosine_sched], milestones=[warmup_epochs])
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     use_amp = (device.type == "cuda") and args.amp
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
@@ -146,7 +153,10 @@ def main():
                 outputs = model(images, ctx_idx, tgt_idx_list)
                 if args.model_type == "ijepa":
                     loss = loss_fn(outputs["predictions"], outputs["targets"])
-                elif args.model_type in ["sigreg_jepa", "visreg_jepa"]:
+                elif args.model_type == "sigreg_jepa":
+                    loss_dict = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])
+                    loss = loss_dict["loss"]
+                elif args.model_type == "visreg_jepa":
                     loss_dict = loss_fn(outputs["predictions"], outputs["targets"], outputs["context_tokens"])
                     loss = loss_dict["loss"]
 
@@ -161,7 +171,13 @@ def main():
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
-            model.update_target_encoder()
+            if args.model_type == "ijepa":
+                total_steps = args.epochs * len(train_loader)
+                current_step = (epoch - 1) * len(train_loader) + batch_idx
+                momentum = 1.0 - (1.0 - 0.996) * 0.5 * (1.0 + math.cos(math.pi * current_step / max(1, total_steps)))
+                model.update_target_encoder(momentum=momentum)
+            else:
+                model.update_target_encoder()
             train_loss_sum += loss.item()
 
         scheduler.step()
@@ -183,7 +199,9 @@ def main():
                     outputs = model(images, ctx_idx, tgt_idx_list)
                     if args.model_type == "ijepa":
                         loss = loss_fn(outputs["predictions"], outputs["targets"])
-                    else:
+                    elif args.model_type == "sigreg_jepa":
+                        loss = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])["loss"]
+                    elif args.model_type == "visreg_jepa":
                         loss = loss_fn(outputs["predictions"], outputs["targets"], outputs["context_tokens"])["loss"]
                 val_loss_sum += loss.item()
 

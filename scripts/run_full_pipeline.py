@@ -61,31 +61,31 @@ def main():
         print("\n" + "="*80)
         print("PHASE 1: FULL-DATA BENCHMARK (100% Labels, 50-Epoch SSL / 30-Epoch Baseline)")
         print("="*80)
-        run_cmd(["python", "scripts/train_jepa.py", "--model_type", "ijepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
-        run_cmd(["python", "scripts/train_jepa.py", "--model_type", "sigreg_jepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
-        run_cmd(["python", "scripts/train_jepa.py", "--model_type", "visreg_jepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
-        run_cmd(["python", "scripts/train_unet.py", "--epochs", "30", "--batch_size", "8"] + base_flags)
-        run_cmd(["python", "scripts/train_nnunet.py", "--epochs", "30", "--batch_size", "8"] + base_flags)
-        run_cmd(["python", "scripts/train_downstream.py", "--model_type", "ijepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
-        run_cmd(["python", "scripts/train_downstream.py", "--model_type", "sigreg_jepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
-        run_cmd(["python", "scripts/train_downstream.py", "--model_type", "visreg_jepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
-        run_cmd(["python", "scripts/evaluate.py"] + ([f for f in base_flags if f != "--amp"]) + ckpt_flags)
+        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "ijepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
+        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "sigreg_jepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
+        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "visreg_jepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
+        run_cmd([sys.executable, "scripts/train_unet.py", "--epochs", "30", "--batch_size", "8"] + base_flags)
+        run_cmd([sys.executable, "scripts/train_nnunet.py", "--epochs", "30", "--batch_size", "8"] + base_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "ijepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "sigreg_jepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "visreg_jepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/evaluate.py"] + ([f for f in base_flags if f != "--amp"]) + ckpt_flags)
 
     if args.mode in ["all", "low_data"]:
         print("\n" + "="*80)
         print(f"PHASE 2: LOW-DATA LABEL EFFICIENCY BENCHMARK ({low_data_version})")
         print("="*80)
-        run_cmd(["python", "scripts/evaluate_low_data.py", "--epochs", "30", "--exp_version", low_data_version] + base_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/evaluate_low_data.py", "--epochs", "30", "--exp_version", low_data_version] + base_flags + ckpt_flags)
 
     if args.mode in ["all", "ood"]:
         print("\n" + "="*80)
         print(f"PHASE 3: OUT-OF-DISTRIBUTION (OOD) SCANNER & CROSS-PATHOLOGY BENCHMARKS ({ood_version})")
         print("="*80)
-        run_cmd(["python", "scripts/evaluate_ood.py", "--exp_version", ood_version] + ([f for f in base_flags if f != "--amp"]) + ckpt_flags)
-        run_cmd(["python", "scripts/evaluate_men_rt_ood.py", "--max_samples", "5000", "--exp_version", men_rt_version] + ([f for f in base_flags if f != "--amp"]) + ckpt_flags)
+        run_cmd([sys.executable, "scripts/evaluate_ood.py", "--exp_version", ood_version] + ([f for f in base_flags if f != "--amp"]) + ckpt_flags)
+        run_cmd([sys.executable, "scripts/evaluate_men_rt_ood.py", "--max_samples", "5000", "--exp_version", men_rt_version] + ([f for f in base_flags if f != "--amp"]) + ckpt_flags)
 
     # Generate All Publication Figures & Compile LaTeX Paper
-    run_cmd(["python", "scripts/generate_figures.py"])
+    run_cmd([sys.executable, "scripts/generate_figures.py"])
     if not args.skip_latex:
         paper_dir = Path("paper/latex").resolve()
         try:

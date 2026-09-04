@@ -93,7 +93,8 @@ The EMA teacher parameters $\bar{\theta}$ are updated without gradients at step 
 $$\bar{\theta}_t \leftarrow m \bar{\theta}_{t-1} + (1 - m) \theta_t$$
 
 ### 3.3 Loss Function
-$$\mathcal{L}_{\text{I-JEPA}} = \frac{1}{M} \sum_{k=1}^M \left\| \text{LayerNorm}(\hat{y}_{\text{tgt}}^{(k)}) - \text{LayerNorm}(y_{\text{tgt}}^{(k)}) \right\|_1$$
+Following official I-JEPA (Assran et al., 2023), only target representations are LayerNormed; predicted targets are unnormalized to preserve scale and magnitude gradients:
+$$\mathcal{L}_{\text{I-JEPA}} = \frac{1}{M} \sum_{k=1}^M \text{SmoothL1}\left(\hat{y}_{\text{tgt}}^{(k)}, \, \text{LayerNorm}(y_{\text{tgt}}^{(k)})\right)$$
 
 ---
 
@@ -102,17 +103,18 @@ $$\mathcal{L}_{\text{I-JEPA}} = \frac{1}{M} \sum_{k=1}^M \left\| \text{LayerNorm
 Located in [`src/brats_jepa/models/sigreg_jepa.py`](file:///Users/hanriman/Documents/master/thesis_2d/src/brats_jepa/models/sigreg_jepa.py).
 
 ### 4.1 Architecture Overview
-SigReg JEPA (LeJEPA / SIGReg) is a **heuristic-free single-encoder architecture**:
-- **NO EMA Teacher Encoder**: $E_{\bar{\theta}}$ is eliminated. Target representations are computed directly via the online encoder $E_\theta$ with gradients detached.
-- Representation collapse is prevented mathematically using **Sketched Isotropic Gaussian Regularization** (SIGReg) on latent features $Z \in \mathbb{R}^{N \times D}$.
+SigReg JEPA (LeJEPA / SIGReg; Balestriero & LeCun, 2025) is a **heuristic-free single-encoder architecture**:
+- **No EMA Teacher Encoder**: $E_{\bar{\theta}}$ is eliminated. Target representations are computed directly via the online encoder $E_\theta$ with gradients detached.
+- **Projector MLP**: Encoder features $h \in \mathbb{R}^{384}$ pass through a 2-layer MLP (`Linear(384, 1024) -> LayerNorm -> GELU -> Linear(1024, 128)`) to produce projected representations $z \in \mathbb{R}^{128}$ for regularization. This decouples semantic representation learning from isotropic Gaussian collapse prevention.
+- Representation collapse is prevented mathematically using **Sketched Isotropic Gaussian Regularization** (SIGReg).
 
 ### 4.2 Loss Formulation
-$$\mathcal{L}_{\text{SigReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{var}} \mathcal{L}_{\text{var}}(Z) + \lambda_{\text{cov}} \mathcal{L}_{\text{cov}}(Z)$$
+$$\mathcal{L}_{\text{SigReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{SIGReg}} \cdot \mathcal{T}_{\text{EP}}(g_\psi(Z))$$
 
-1. **Variance Hinge Loss ($\mathcal{L}_{\text{var}}$)**: Forces standard deviation of each feature dimension above $\gamma = 1.0$:
-   $$\mathcal{L}_{\text{var}}(Z) = \frac{1}{D} \sum_{j=1}^D \max\left(0, \, 1.0 - \sqrt{\text{Var}(Z_{:, j}) + \epsilon}\right)$$
-2. **Covariance Decorrelation Loss ($\mathcal{L}_{\text{cov}}$)**: Penalizes off-diagonal cross-feature dimension correlations:
-   $$\mathbf{C} = \frac{1}{N-1} (Z - \bar{Z})^T (Z - \bar{Z}), \qquad \mathcal{L}_{\text{cov}}(Z) = \frac{1}{D} \sum_{i \neq j} \mathbf{C}_{i, j}^2$$
+1. **Cramér–Wold Slicing**: Projected tokens $z = g_\psi(h) \in \mathbb{R}^{N \times D_{\text{proj}}}$ are projected onto $M=256$ random unit vectors $u \sim \mathbb{S}^{D_{\text{proj}}-1}$.
+2. **Epps–Pulley Goodness-of-Fit Test ($\mathcal{T}_{\text{EP}}$)**:
+   For each 1D slice $p_m = z u_m$, the empirical characteristic function $\hat{\phi}(t) = \frac{1}{N} \sum_{n=1}^N \exp(i t p_{m, n})$ is compared against the standard normal characteristic function $\phi(t) = \exp(-t^2/2)$ via numerical quadrature over $t \in [0, 3.0]$:
+   $$\mathcal{T}_{\text{EP}} = N \int_0^{t_{\max}} |\hat{\phi}(t) - \phi(t)|^2 e^{-t^2/2} \, dt$$
 
 ---
 
@@ -121,12 +123,18 @@ $$\mathcal{L}_{\text{SigReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{var
 Located in [`src/brats_jepa/models/visreg_jepa.py`](file:///Users/hanriman/Documents/master/thesis_2d/src/brats_jepa/models/visreg_jepa.py).
 
 ### 5.1 Architecture Overview
-VisReg JEPA (VISReg) is a **heuristic-free single-encoder architecture**:
+VisReg JEPA (VISReg; Wu, Balestriero, Levine, 2026) is a **heuristic-free single-encoder architecture**:
 - Eliminates momentum teacher updates.
-- Prevents representation over-smoothing across spatial patch locations by enforcing spatial feature variance contrast.
+- Decouples representation regularization into independent **Scale** and **Shape** objectives to avoid gradient vanishing during dimensional collapse.
 
 ### 5.2 Loss Formulation
-$$\mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{vis}} \cdot \frac{1}{B} \sum_{b=1}^B \max\left(0, \, 1.0 - \sqrt{\text{Var}_{\text{patch}}(Z_b) + \epsilon}\right)$$
+$$\mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{var}} \mathcal{L}_{\text{var}}(Z) + \lambda_{\text{SWD}} \mathcal{L}_{\text{SWD}}(Z)$$
+
+1. **Scale Regularization (Batch Variance Hinge)**: Forces feature dimension variance across the batch above $\gamma = 1.0$:
+   $$\mathcal{L}_{\text{var}}(Z) = \frac{1}{D} \sum_{j=1}^D \max\left(0, \, 1.0 - \sqrt{\text{Var}_B(Z_{:, j}) + \epsilon}\right)$$
+2. **Shape Regularization (Sliced-Wasserstein Distance, SWD)**:
+   Projects representations onto $M=256$ random unit directions $u \sim \mathbb{S}^{D-1}$, sorts the 1D projections $p_m = Z u_m$, and computes the $L_1$ Wasserstein distance against theoretical standard normal quantiles $\Phi^{-1}((i - 0.5)/N)$:
+   $$\mathcal{L}_{\text{SWD}}(Z) = \frac{1}{M} \sum_{m=1}^M \frac{1}{N} \sum_{i=1}^N \left| p_{m, (i)} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right) \right|$$
 
 ---
 

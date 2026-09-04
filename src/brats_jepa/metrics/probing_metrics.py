@@ -11,7 +11,7 @@ def compute_effective_rank(z: torch.Tensor) -> float:
     """
     z_centered = z - z.mean(dim=0, keepdim=True)
     try:
-        _, S, _ = torch.svd(z_centered)
+        _, S, _ = torch.linalg.svd(z_centered, full_matrices=False)
         # Use squared singular values (= eigenvalues of covariance matrix)
         # Linear singular values overestimate rank and mask true collapse.
         eigenvalues = S ** 2

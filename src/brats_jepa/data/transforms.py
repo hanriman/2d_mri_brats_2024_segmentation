@@ -92,6 +92,7 @@ class JEPAMaskingTransform:
         else:
             chosen_set = set(non_overlap_candidates)
             supplement = [i for i in all_non_target if i not in chosen_set]
+            np.random.shuffle(supplement)
             chosen_ctx = non_overlap_candidates + supplement[:target_ctx_len - len(non_overlap_candidates)]
             
         return {

@@ -10,7 +10,7 @@ class VisRegJEPA(nn.Module):
     """
     VisReg JEPA (VISReg): Heuristic-free Joint-Embedding Predictive Architecture.
     Does NOT use an EMA teacher encoder. Representation collapse is prevented mathematically
-    by Variance-Invariance-Sketching Regularization (VISReg).
+    by Variance-Invariance-Sketching Regularization (VISReg) (Wu, Balestriero, Levine, 2026).
     """
     def __init__(
         self,
@@ -21,12 +21,12 @@ class VisRegJEPA(nn.Module):
         encoder_depth: int = 8,
         predictor_depth: int = 4,
         num_heads: int = 6,
-        visreg_weight: float = 1.0,
-        spatial_reg_weight: float = 0.5,
+        var_weight: float = 1.0,
+        swd_weight: float = 1.0,
     ):
         super().__init__()
-        self.visreg_weight = visreg_weight
-        self.spatial_reg_weight = spatial_reg_weight
+        self.var_weight = var_weight
+        self.swd_weight = swd_weight
         
         # Single Encoder (No EMA teacher required)
         self.context_encoder = VisionTransformerEncoder2D(
@@ -58,9 +58,7 @@ class VisRegJEPA(nn.Module):
     ) -> dict[str, Any]:
         B = images.shape[0]
         
-        # 1. Forward encoder on full image WITHOUT gradients to extract target representations.
-        #    This prevents self-attention leakage: if context tokens were extracted from a full-image
-        #    forward pass, they would already contain target patch information via global attention.
+        # 1. Forward encoder on full image without gradients to extract target representations.
         with torch.no_grad():
             full_tokens = self.context_encoder(images)  # [B, N_patches, D]
         
@@ -85,6 +83,6 @@ class VisRegJEPA(nn.Module):
             "targets": targets,
             "context_tokens": context_tokens,
             "target_tokens": full_tokens,
-            "visreg_weight": self.visreg_weight,
-            "spatial_reg_weight": self.spatial_reg_weight,
+            "var_weight": self.var_weight,
+            "swd_weight": self.swd_weight,
         }

@@ -28,7 +28,7 @@
 \maketitle
 
 \begin{abstract}
-Joint-Embedding Predictive Architectures (JEPA) have emerged as a powerful self-supervised representation learning paradigm operating in latent embedding space without pixel-level reconstruction. Standard I-JEPA prevents representation collapse using an Exponential Moving Average (EMA) teacher target encoder heuristic. Recent statistical regularization advances—specifically SIGReg (Sketched Isotropic Gaussian Regularization in LeJEPA) and VISReg (Variance-Invariance-Sketching Regularization)—enable \emph{heuristic-free} single-encoder JEPA training without EMA teachers. In this paper, we systematically evaluate I-JEPA, SigReg JEPA, VisReg JEPA, a Residual UNet baseline, and a state-of-the-art nnU-Net baseline with deep supervision on 2D multi-modal Glioma MRI (BraTS GLI) across three key clinical paradigms: (1) Full-Data Benchmark, (2) Low-Data Label Efficiency ($1\%$ to $100\%$ labels), and (3) Out-of-Distribution (OOD) Scanner Shift and Cross-Pathology Transfer on Meningioma MRI (\texttt{BraTS-MEN-RT}). Our empirical findings demonstrate that in extreme low-data regimes ($1\%$ labels / $63$ training slices), SigReg JEPA achieves a top downstream Test Dice of $0.5933$, outperforming fully supervised nnU-Net ($0.3847$) by $+20.86\%$ absolute Dice ($+54.2\%$ relative gain) while running $1.9\times$ faster per epoch. Furthermore, on zero-shot cross-pathology transfer under zero-padded missing modalities, self-supervised JEPAs maintain transferability ($0.0700$--$0.0929$ Dice) while standard UNet completely collapses ($0.0151$ Dice), proving that analytical variance-covariance regularization creates robust, modality-invariant representations without momentum teacher overhead.
+Joint-Embedding Predictive Architectures (JEPA) have emerged as a powerful self-supervised representation learning paradigm operating in latent embedding space without pixel-level reconstruction. Standard I-JEPA prevents representation collapse using an Exponential Moving Average (EMA) teacher target encoder heuristic. Recent statistical regularization advances—specifically SIGReg (Sketched Isotropic Gaussian Regularization in LeJEPA) and VISReg (Variance-Invariance-Sketching Regularization)—enable \emph{heuristic-free} single-encoder JEPA training without EMA teachers. In this paper, we systematically evaluate I-JEPA, SigReg JEPA, VisReg JEPA, a Residual UNet baseline, and a state-of-the-art nnU-Net baseline with deep supervision on 2D multi-modal Glioma MRI (BraTS GLI) across three key clinical paradigms: (1) Full-Data Benchmark, (2) Low-Data Label Efficiency ($1\%$ to $100\%$ labels), and (3) Out-of-Distribution (OOD) Scanner Shift and Cross-Pathology Transfer on Meningioma MRI (\texttt{BraTS-MEN-RT}). Our empirical findings demonstrate that in extreme low-data regimes ($1\%$ labels / $63$ training slices), SigReg JEPA achieves a top downstream Test Dice of $0.5933$, outperforming fully supervised nnU-Net ($0.3847$) by $+20.86\%$ absolute Dice ($+54.2\%$ relative gain) while running $1.9\times$ faster per epoch. Furthermore, on zero-shot cross-pathology transfer under zero-padded missing modalities, self-supervised JEPAs maintain transferability ($0.0700$--$0.0929$ Dice) while standard UNet completely collapses ($0.0151$ Dice), proving that analytical statistical regularization creates robust, modality-invariant representations without momentum teacher overhead.
 \end{abstract}
 
 
@@ -66,17 +66,18 @@ Predicts target patch representations using student context encoder $E_\theta$, 
 \end{equation}
 
 \paragraph{SigReg JEPA (Heuristic-Free Single-Encoder)}
-Eliminates EMA target encoders using Sketched Isotropic Gaussian Regularization (SIGReg) \citep{balestriero2025lejepa, bardes2021vicreg}:
+Eliminates EMA target encoders using Sketched Isotropic Gaussian Regularization (SIGReg) \citep{balestriero2025lejepa}:
 \begin{equation}
-    \mathcal{L}_{\text{SigReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{var}} \mathcal{L}_{\text{var}}(Z) + \lambda_{\text{cov}} \mathcal{L}_{\text{cov}}(Z)
+    \mathcal{L}_{\text{SigReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{SIGReg}} \cdot \mathcal{T}_{\text{EP}}(g_\psi(Z))
 \end{equation}
-where $\mathcal{L}_{\text{var}}$ forces feature dimension variance above $\gamma = 1.0$, and $\mathcal{L}_{\text{cov}}$ penalizes off-diagonal feature covariance.
+where $g_\psi$ is a projector MLP mapping representations to $\mathbb{R}^{D_{\text{proj}}}$, and $\mathcal{T}_{\text{EP}}$ computes the Epps--Pulley goodness-of-fit statistic against standard Gaussian $\mathcal{N}(0, 1)$ across random 1D Cram\'er--Wold projections.
 
-\paragraph{VisReg JEPA (Spatial Variance Regularization)}
-Applies spatial patch feature variance contrast penalties across spatial patch dimensions \citep{wu2026visreg}:
+\paragraph{VisReg JEPA (Variance-Invariance-Sketching Regularization)}
+Decouples scale and shape representation regularization \citep{wu2026visreg}:
 \begin{equation}
-    \mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{vis}} \cdot \frac{1}{B} \sum_{b=1}^B \max\left(0, \, 1.0 - \sqrt{\text{Var}_{\text{patch}}(Z_b) + \epsilon}\right)
+    \mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{var}} \mathcal{L}_{\text{var}}(Z) + \lambda_{\text{SWD}} \mathcal{L}_{\text{SWD}}(Z)
 \end{equation}
+where $\mathcal{L}_{\text{var}}$ enforces batch feature dimension variance above $1.0$, and $\mathcal{L}_{\text{SWD}}$ computes the Sliced-Wasserstein Distance against theoretical standard Gaussian quantiles along random 1D projections.
 
 
 \section{Experiments and Empirical Results}
@@ -201,7 +202,7 @@ Our empirical investigation establishes three core scientific findings:
     \item \textbf{Heuristic-Free Non-Collapse}: SigReg JEPA achieves full feature rank (\textbf{366.91}), eliminating momentum teacher update overhead while running $\sim 40\%$ faster per epoch than nnU-Net.
 \end{enumerate}
 
-In conclusion, self-supervised JEPA models regularized via variance-covariance penalties offer a fast, label-efficient, and highly robust paradigm for multi-modal medical image segmentation.
+In conclusion, self-supervised JEPA models regularized via isotropic Gaussian sketching (SIGReg) and scale-shape regularization (VISReg) offer a fast, label-efficient, and highly robust paradigm for multi-modal medical image segmentation.
 
 
 \begin{ack}

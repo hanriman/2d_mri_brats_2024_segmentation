@@ -1,7 +1,19 @@
 from typing import Dict
 import numpy as np
 import torch
+from scipy.ndimage import binary_erosion
 from scipy.spatial.distance import cdist
+
+def _extract_surface_points(mask_2d: np.ndarray) -> np.ndarray:
+    """Extracts 2D surface boundary contour points using morphological erosion."""
+    if not np.any(mask_2d):
+        return np.empty((0, 2), dtype=int)
+    eroded = binary_erosion(mask_2d, structure=np.ones((3, 3)))
+    boundary = mask_2d ^ eroded
+    pts = np.argwhere(boundary > 0)
+    if len(pts) == 0:
+        pts = np.argwhere(mask_2d > 0)
+    return pts
 
 def compute_dice_score(pred: torch.Tensor, target: torch.Tensor, threshold: float = 0.5, smooth: float = 1e-5, from_logits: bool = True) -> float:
     """Computes Dice Similarity Coefficient (DSC) for binary segmentation predictions."""
@@ -17,32 +29,33 @@ def compute_dice_score(pred: torch.Tensor, target: torch.Tensor, threshold: floa
 
 def compute_hd95_single(pred_bin: np.ndarray, target_bin: np.ndarray) -> float:
     """
-    Computes 95th Percentile Hausdorff Distance (HD95) in pixels between binary predicted and target masks.
+    Computes 95th Percentile Hausdorff Distance (HD95) in pixels between surface boundary contours
+    of binary predicted and target masks (BraTS evaluation convention).
     Returns 0.0 for identical masks. When only one mask is empty (complete miss or hallucination),
     returns the image diagonal as the maximum possible distance penalty.
     """
-    p_mask = (pred_bin > 0).astype(np.uint8)
-    t_mask = (target_bin > 0).astype(np.uint8)
+    p_mask = (pred_bin > 0).astype(bool)
+    t_mask = (target_bin > 0).astype(bool)
     
     if np.array_equal(p_mask, t_mask):
         return 0.0
         
-    pred_pts = np.argwhere(p_mask > 0)
-    target_pts = np.argwhere(t_mask > 0)
+    pred_pts = _extract_surface_points(p_mask)
+    target_pts = _extract_surface_points(t_mask)
     
     if len(pred_pts) == 0 or len(target_pts) == 0:
         # One mask is empty while the other is not — this is a complete failure.
-        # Return the image diagonal as the maximum possible distance.
         h, w = pred_bin.shape[-2], pred_bin.shape[-1]
         return float(np.sqrt(h**2 + w**2))
         
-    # Distance from pred points to nearest target point
+    # Distance from pred surface to nearest target surface point
     d_p2t = cdist(pred_pts, target_pts).min(axis=1)
-    # Distance from target points to nearest pred point
+    # Distance from target surface to nearest pred surface point
     d_t2p = cdist(target_pts, pred_pts).min(axis=1)
     
-    all_distances = np.concatenate([d_p2t, d_t2p])
-    return float(np.percentile(all_distances, 95))
+    # Standard symmetric 95th percentile Hausdorff distance
+    hd95 = max(float(np.percentile(d_p2t, 95)), float(np.percentile(d_t2p, 95)))
+    return hd95
 
 def compute_segmentation_metrics(pred: torch.Tensor, target: torch.Tensor, threshold: float = 0.5, smooth: float = 1e-5) -> Dict[str, float]:
     """Computes DSC, IoU, Precision, Recall, and HD95 (95th Percentile Hausdorff Distance).

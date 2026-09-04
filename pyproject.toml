@@ -3,20 +3,20 @@ name = "brats-jepa"
 version = "0.1.0"
 description = "Self-Supervised Representation Learning on 2D BraTS Glioma MRI: Comparing I-JEPA, SigReg JEPA, VisReg JEPA, and UNet"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
-    "matplotlib>=3.11.1",
-    "monai>=1.6.0",
-    "nibabel>=5.4.2",
-    "numpy>=2.5.2",
-    "pandas>=3.0.5",
-    "pyyaml>=6.0.3",
-    "scikit-learn>=1.9.0",
-    "scipy>=1.18.0",
-    "seaborn>=0.13.2",
-    "torch>=2.13.0",
-    "torchvision>=0.28.0",
-    "tqdm>=4.70.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "monai>=1.3.0",
+    "nibabel>=4.0.0",
+    "numpy>=1.24.0",
+    "pandas>=1.5.0",
+    "pyyaml>=6.0",
+    "scikit-learn>=1.2.0",
+    "scipy>=1.10.0",
+    "seaborn>=0.12.0",
+    "matplotlib>=3.7.0",
+    "tqdm>=4.65.0",
 ]
 
 [build-system]

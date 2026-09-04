@@ -220,18 +220,41 @@ def main():
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            ckpt_path = ckpt_dir / f"best_{args.model_type}.pt"
+            ckpt_path = ckpt_dir / f"min_loss_{args.model_type}.pt"
             torch.save({
                 "epoch": epoch,
                 "model_type": args.model_type,
                 "context_encoder_state_dict": model.context_encoder.state_dict(),
                 "val_loss": best_val_loss,
             }, ckpt_path)
-            logger.info(f"===> Saved best {args.model_type} encoder to {ckpt_path.name}")
+
+        if epoch % 10 == 0 or epoch == args.epochs:
+            periodic_path = ckpt_dir / f"{args.model_type}_epoch_{epoch:02d}.pt"
+            torch.save({
+                "epoch": epoch,
+                "model_type": args.model_type,
+                "context_encoder_state_dict": model.context_encoder.state_dict(),
+                "val_loss": avg_val_loss,
+            }, periodic_path)
+
+    # In self-supervised learning (I-JEPA, LeJEPA, VISReg), the final epoch representations
+    # after full cosine annealing are fully structured and mature for downstream tasks.
+    final_ckpt = ckpt_dir / f"final_{args.model_type}.pt"
+    best_ckpt = ckpt_dir / f"best_{args.model_type}.pt"
+    final_payload = {
+        "epoch": args.epochs,
+        "model_type": args.model_type,
+        "context_encoder_state_dict": model.context_encoder.state_dict(),
+        "train_loss": avg_train_loss,
+        "val_loss": avg_val_loss,
+    }
+    torch.save(final_payload, final_ckpt)
+    torch.save(final_payload, best_ckpt)
+    logger.info(f"===> Saved final pre-trained {args.model_type} encoder (Epoch {args.epochs}) to {best_ckpt.name} and {final_ckpt.name}")
 
     total_duration = time.perf_counter() - start_total_time
     metric_tracker.save_json(metrics_dir / f"{args.model_type}_pretrain_metrics.json")
-    logger.info(f"Pre-training complete for {args.model_type}! Best Val Loss: {best_val_loss:.5f} | Total Time: {total_duration:.2f}s ({total_duration/60:.2f} min)")
+    logger.info(f"Pre-training complete for {args.model_type}! Final Val Loss: {avg_val_loss:.5f} | Total Time: {total_duration:.2f}s ({total_duration/60:.2f} min)")
 
 if __name__ == "__main__":
     main()

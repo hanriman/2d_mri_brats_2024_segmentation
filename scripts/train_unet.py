@@ -29,6 +29,7 @@ def parse_args():
     parser.add_argument("--amp", action="store_true", default=True, help="Enable automatic mixed precision on CUDA")
     parser.add_argument("--no_amp", action="store_false", dest="amp", help="Disable automatic mixed precision")
     parser.add_argument("--device", type=str, default="auto", help="Device")
+    parser.add_argument("--max_batches", type=int, default=None, help="Limit batches per epoch for quick local smoke testing")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     return parser.parse_args()
 
@@ -82,7 +83,9 @@ def main():
         model.train()
         train_loss = 0.0
 
-        for batch in train_loader:
+        for batch_idx, batch in enumerate(train_loader):
+            if args.max_batches and batch_idx >= args.max_batches:
+                break
             images = batch["image"].to(device)
             labels = batch["label"].to(device)
 
@@ -102,14 +105,17 @@ def main():
             train_loss += loss.item()
 
         scheduler.step()
-        avg_train_loss = train_loss / len(train_loader)
+        n_train_batches = min(len(train_loader), args.max_batches) if args.max_batches else len(train_loader)
+        avg_train_loss = train_loss / max(1, n_train_batches)
 
         model.eval()
         val_loss = 0.0
         val_dice = 0.0
 
         with torch.no_grad():
-            for batch in val_loader:
+            for batch_idx, batch in enumerate(val_loader):
+                if args.max_batches and batch_idx >= args.max_batches:
+                    break
                 images = batch["image"].to(device)
                 labels = batch["label"].to(device)
 
@@ -121,8 +127,9 @@ def main():
                 metrics = compute_segmentation_metrics(logits, labels)
                 val_dice += metrics["dice"]
 
-        avg_val_loss = val_loss / len(val_loader)
-        avg_val_dice = val_dice / len(val_loader)
+        n_val_batches = min(len(val_loader), args.max_batches) if args.max_batches else len(val_loader)
+        avg_val_loss = val_loss / max(1, n_val_batches)
+        avg_val_dice = val_dice / max(1, n_val_batches)
         epoch_duration = time.perf_counter() - epoch_start
 
         logger.info(f"Epoch [{epoch:02d}/{args.epochs:02d}] | Train Loss: {avg_train_loss:.5f} | Val Loss: {avg_val_loss:.5f} | Val Dice: {avg_val_dice:.5f} | Duration: {epoch_duration:.2f}s")

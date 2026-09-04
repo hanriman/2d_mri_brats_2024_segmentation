@@ -28,6 +28,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory to save summary metrics")
     parser.add_argument("--exp_version", type=str, default=None, help="Versioned experiment directory tag")
     parser.add_argument("--device", type=str, default="auto", help="Device")
+    parser.add_argument("--max_batches", type=int, default=None, help="Limit batches for quick local smoke testing")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     return parser.parse_args()
 
@@ -82,9 +83,13 @@ def main():
             
         dice_list, iou_list, prec_list, rec_list, hd95_list = [], [], [], [], []
         t0 = time.perf_counter()
+        eval_samples = 0
         with torch.no_grad():
-            for batch in test_loader:
+            for batch_idx, batch in enumerate(test_loader):
+                if args.max_batches and batch_idx >= args.max_batches:
+                    break
                 images, labels = batch["image"].to(device), batch["label"].to(device)
+                eval_samples += images.shape[0]
                 logits = unet(images)
                 m = compute_segmentation_metrics(logits, labels)
                 dice_list.append(m["dice"])
@@ -93,7 +98,7 @@ def main():
                 rec_list.append(m["recall"])
                 hd95_list.append(m["hd95"])
         infer_time = time.perf_counter() - t0
-        ms_per_slice = (infer_time / num_samples) * 1000.0 if num_samples > 0 else 0.0
+        ms_per_slice = (infer_time / eval_samples) * 1000.0 if eval_samples > 0 else 0.0
         
         unet_json = metrics_dir / "unet_train_metrics.json"
         if not unet_json.exists():
@@ -134,9 +139,13 @@ def main():
 
         dice_list, iou_list, prec_list, rec_list, hd95_list = [], [], [], [], []
         t0 = time.perf_counter()
+        eval_samples = 0
         with torch.no_grad():
-            for batch in test_loader:
+            for batch_idx, batch in enumerate(test_loader):
+                if args.max_batches and batch_idx >= args.max_batches:
+                    break
                 images, labels = batch["image"].to(device), batch["label"].to(device)
+                eval_samples += images.shape[0]
                 logits = nnunet(images)
                 m = compute_segmentation_metrics(logits, labels)
                 dice_list.append(m["dice"])
@@ -145,7 +154,7 @@ def main():
                 rec_list.append(m["recall"])
                 hd95_list.append(m["hd95"])
         infer_time = time.perf_counter() - t0
-        ms_per_slice = (infer_time / num_samples) * 1000.0 if num_samples > 0 else 0.0
+        ms_per_slice = (infer_time / eval_samples) * 1000.0 if eval_samples > 0 else 0.0
 
         nnunet_json = metrics_dir / "nnunet_train_metrics.json"
         if not nnunet_json.exists():
@@ -193,7 +202,9 @@ def main():
 
             ranks, sims = [], []
             with torch.no_grad():
-                for batch in test_loader:
+                for batch_idx, batch in enumerate(test_loader):
+                    if args.max_batches and batch_idx >= args.max_batches:
+                        break
                     images = batch["image"].to(device)
                     tokens = ssl_model.context_encoder(images)
                     rep_metrics = compute_representation_collapse_metrics(tokens)
@@ -215,9 +226,13 @@ def main():
 
             dice_list, iou_list, prec_list, rec_list, hd95_list = [], [], [], [], []
             t0 = time.perf_counter()
+            eval_samples = 0
             with torch.no_grad():
-                for batch in test_loader:
+                for batch_idx, batch in enumerate(test_loader):
+                    if args.max_batches and batch_idx >= args.max_batches:
+                        break
                     images, labels = batch["image"].to(device), batch["label"].to(device)
+                    eval_samples += images.shape[0]
                     logits = model(images)
                     m = compute_segmentation_metrics(logits, labels)
                     dice_list.append(m["dice"])
@@ -226,7 +241,7 @@ def main():
                     rec_list.append(m["recall"])
                     hd95_list.append(m["hd95"])
             infer_time = time.perf_counter() - t0
-            ms_per_slice = (infer_time / num_samples) * 1000.0 if num_samples > 0 else 0.0
+            ms_per_slice = (infer_time / eval_samples) * 1000.0 if eval_samples > 0 else 0.0
 
             ft_json = metrics_dir / f"finetuned_{type_name}_metrics.json"
             if not ft_json.exists():

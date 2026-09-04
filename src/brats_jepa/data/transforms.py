@@ -37,6 +37,7 @@ class JEPAMaskingTransform:
         num_target_masks: int = 4,
         context_block_size: tuple[int, int] = (14, 14),
         target_block_size: tuple[int, int] = (5, 5),
+        num_context_patches: int = 96,
     ):
         self.img_size = img_size
         self.patch_size = patch_size
@@ -47,6 +48,7 @@ class JEPAMaskingTransform:
         
         self.context_h, self.context_w = context_block_size
         self.target_h, self.target_w = target_block_size
+        self.num_context_patches = num_context_patches
 
     def _sample_fixed_block_mask(self, block_h: int, block_w: int) -> np.ndarray:
         """Samples a rectangular block of patch indices with fixed height and width at random grid coordinates."""
@@ -63,16 +65,37 @@ class JEPAMaskingTransform:
     def __call__(self, x: torch.Tensor) -> dict:
         """
         Returns context patch indices [N_ctx] and list of target patch indices [N_tgt].
+        Context indices are guaranteed to NOT overlap with any target indices,
+        and maintain a strictly uniform length across all samples for seamless PyTorch batch collation.
         x: [C, H, W]
         """
-        context_indices = self._sample_fixed_block_mask(self.context_h, self.context_w)
         target_masks = []
+        all_target_indices = set()
         for _ in range(self.num_target_masks):
             target_idx = self._sample_fixed_block_mask(self.target_h, self.target_w)
             target_masks.append(torch.tensor(target_idx, dtype=torch.long))
+            all_target_indices.update(target_idx.tolist())
+        
+        # Sample candidate context block
+        ctx_candidate_block = self._sample_fixed_block_mask(self.context_h, self.context_w)
+        
+        # Filter out target overlaps from the context block
+        non_overlap_candidates = [i for i in ctx_candidate_block if i not in all_target_indices]
+        
+        # Pool of all non-target patches across the entire grid
+        all_non_target = [i for i in range(self.num_patches) if i not in all_target_indices]
+        
+        # Guarantee exactly self.num_context_patches for uniform batch collation
+        target_ctx_len = min(self.num_context_patches, len(all_non_target))
+        if len(non_overlap_candidates) >= target_ctx_len:
+            chosen_ctx = non_overlap_candidates[:target_ctx_len]
+        else:
+            chosen_set = set(non_overlap_candidates)
+            supplement = [i for i in all_non_target if i not in chosen_set]
+            chosen_ctx = non_overlap_candidates + supplement[:target_ctx_len - len(non_overlap_candidates)]
             
         return {
             "image": x,
-            "context_indices": torch.tensor(context_indices, dtype=torch.long),
+            "context_indices": torch.tensor(chosen_ctx, dtype=torch.long),
             "target_indices": target_masks,
         }

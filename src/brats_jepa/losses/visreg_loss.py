@@ -25,7 +25,8 @@ class VisRegLoss(nn.Module):
     def _spatial_feature_variance(self, context_tokens: torch.Tensor) -> torch.Tensor:
         """Computes variance of representations across spatial patch dimensions within each image."""
         # context_tokens: [B, N_ctx, D]
-        patch_std = torch.sqrt(context_tokens.var(dim=1) + 1e-4)  # [B, D]
+        # Use unbiased=False to avoid NaN when N_ctx=1
+        patch_std = torch.sqrt(context_tokens.var(dim=1, unbiased=False) + 1e-4)  # [B, D]
         return torch.mean(F.relu(1.0 - patch_std))
 
     def forward(

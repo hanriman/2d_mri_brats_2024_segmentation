@@ -60,14 +60,14 @@ class SigRegJEPA(nn.Module):
     ) -> dict[str, Any]:
         B = images.shape[0]
         
-        # 1. Forward single encoder for full image
-        full_tokens = self.context_encoder(images)  # [B, N_patches, D]
+        # 1. Forward encoder on full image WITHOUT gradients to extract target representations.
+        #    This prevents self-attention leakage: if context tokens were extracted from a full-image
+        #    forward pass, they would already contain target patch information via global attention.
+        with torch.no_grad():
+            full_tokens = self.context_encoder(images)  # [B, N_patches, D]
         
-        # 2. Extract context tokens
-        if context_indices.dim() == 1:
-            context_tokens = full_tokens[:, context_indices, :]
-        else:
-            context_tokens = torch.stack([full_tokens[b, context_indices[b], :] for b in range(B)], dim=0)
+        # 2. Forward encoder on ONLY context patches WITH gradients (no attention leakage)
+        context_tokens = self.context_encoder(images, patch_indices=context_indices)
             
         predictions = []
         targets = []

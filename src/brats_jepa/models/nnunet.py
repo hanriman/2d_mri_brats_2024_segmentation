@@ -36,7 +36,11 @@ class BraTS2DnnUNet(nn.Module):
         If deep_supervision is False / eval, returns highest resolution logits [B, out_channels, H, W].
         """
         out = self.nnunet(x)
-        if not self.training and isinstance(out, torch.Tensor) and out.dim() == 5:
-            # DynUNet outputs [B, 4, C, H, W] in eval mode when deep_supervision=True
-            return out[:, 0]
+        if not self.training:
+            # DynUNet may return [B, NumHeads, C, H, W] (5D tensor) or a list/tuple of
+            # multi-resolution tensors when deep_supervision=True. Extract highest resolution.
+            if isinstance(out, (list, tuple)):
+                return out[0]
+            elif isinstance(out, torch.Tensor) and out.dim() == 5:
+                return out[:, 0]
         return out

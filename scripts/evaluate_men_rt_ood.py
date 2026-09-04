@@ -46,6 +46,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="BraTS-MEN-RT Cross-Pathology & Missing-Modality OOD Benchmark")
     parser.add_argument("--max_samples", type=int, default=1000, help="Maximum tumor slices for fast evaluation")
     parser.add_argument("--exp_version", type=str, default="v4_men_rt_ood", help="Experiment version directory tag")
+    parser.add_argument("--checkpoint_dir", type=str, default=None, help="Directory containing model checkpoints")
+    parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv manifest file")
     parser.add_argument("--device", type=str, default="auto", help="Device")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     return parser.parse_args()
@@ -54,38 +56,57 @@ def main():
     args = parse_args()
     set_seed(args.seed)
     device = get_device(args.device)
-    
+
     exp_dir = Path("outputs/experiments") / args.exp_version
     metrics_dir = exp_dir / "metrics"
     logs_dir = exp_dir / "logs"
     for d in [exp_dir, metrics_dir, logs_dir]:
         d.mkdir(parents=True, exist_ok=True)
-        
+
     logger = get_logger("evaluate_men_rt_ood", logs_dir / "evaluate_men_rt_ood.log")
     logger.info(f"Starting BraTS-MEN-RT Cross-Pathology & Missing-Modality OOD Benchmark ({args.exp_version})")
-    
-    metadata_path = (DATA_DIR / "processed" / "brats_men_rt_2d" / "metadata.csv").resolve()
+
+    ckpt_dir = Path(args.checkpoint_dir).resolve() if args.checkpoint_dir else CHECKPOINTS_DIR
+    logger.info(f"Loading evaluation checkpoints from: {ckpt_dir}")
+
+    if args.metadata_csv:
+        metadata_path = Path(args.metadata_csv).resolve()
+    else:
+        from brats_jepa.config import get_metadata_path
+        metadata_path = get_metadata_path("brats_men_rt_2d")
+
     if not metadata_path.exists():
         logger.error(f"Metadata manifest not found at {metadata_path}. Please run prepare_brats_men_rt.py first.")
         return
-        
+
+    logger.info(f"Using Meningioma dataset metadata from: {metadata_path}")
     dataset = BraTSMENRTDataset(metadata_path, max_samples=args.max_samples, tumor_only=True)
     loader = DataLoader(dataset, batch_size=8, shuffle=False, num_workers=0)
     logger.info(f"Loaded {len(dataset)} Meningioma tumor 2D slices for OOD evaluation.")
-    
+
     # 4-channel adaptation strategies
     strategies = {
         "Channel Replication [T1c, T1c, T1c, T1c]": lambda img1c: img1c.repeat(1, 4, 1, 1),
         "Zero-Padding Missing Channels [0, T1c, 0, 0]": lambda img1c: torch.cat([torch.zeros_like(img1c), img1c, torch.zeros_like(img1c), torch.zeros_like(img1c)], dim=1),
     }
-    
+
+    def resolve_ckpt(primary_name, fallback_name):
+        p1 = ckpt_dir / primary_name
+        if p1.exists():
+            return p1
+        p2 = ckpt_dir / fallback_name
+        if p2.exists():
+            return p2
+        return p1
+
     models = {
-        "UNet Baseline": (BraTS2DUNet(in_channels=4, out_channels=1), CHECKPOINTS_DIR / "best_unet.pt"),
-        "nnU-Net (Supervised SOTA)": (BraTS2DnnUNet(in_channels=4, out_channels=1, deep_supervision=True), CHECKPOINTS_DIR / "best_nnunet.pt"),
-        "I-JEPA (Fine-tuned)": (JEPASegmentationModel(img_size=240, patch_size=16, in_channels=4, embed_dim=384, out_channels=1), CHECKPOINTS_DIR / "best_finetuned_ijepa.pt"),
-        "SigReg JEPA (Fine-tuned)": (JEPASegmentationModel(img_size=240, patch_size=16, in_channels=4, embed_dim=384, out_channels=1), CHECKPOINTS_DIR / "best_finetuned_sigreg_jepa.pt"),
-        "VisReg JEPA (Fine-tuned)": (JEPASegmentationModel(img_size=240, patch_size=16, in_channels=4, embed_dim=384, out_channels=1), CHECKPOINTS_DIR / "best_finetuned_visreg_jepa.pt"),
+        "UNet Baseline": (BraTS2DUNet(in_channels=4, out_channels=1), resolve_ckpt("best_unet.pt", "unet_100pct.pt")),
+        "nnU-Net (Supervised SOTA)": (BraTS2DnnUNet(in_channels=4, out_channels=1, deep_supervision=True), resolve_ckpt("best_nnunet.pt", "nnunet_100pct.pt")),
+        "I-JEPA (Fine-tuned)": (JEPASegmentationModel(img_size=240, patch_size=16, in_channels=4, embed_dim=384, out_channels=1), resolve_ckpt("best_finetuned_ijepa.pt", "finetuned_ijepa_100pct.pt")),
+        "SigReg JEPA (Fine-tuned)": (JEPASegmentationModel(img_size=240, patch_size=16, in_channels=4, embed_dim=384, out_channels=1), resolve_ckpt("best_finetuned_sigreg_jepa.pt", "finetuned_sigreg_jepa_100pct.pt")),
+        "VisReg JEPA (Fine-tuned)": (JEPASegmentationModel(img_size=240, patch_size=16, in_channels=4, embed_dim=384, out_channels=1), resolve_ckpt("best_finetuned_visreg_jepa.pt", "finetuned_visreg_jepa_100pct.pt")),
     }
+
     
     results = []
     

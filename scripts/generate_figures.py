@@ -1,8 +1,17 @@
+import argparse
 import json
+from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 from brats_jepa.config import FIGURES_DIR, METRICS_DIR, ensure_directories
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate Figures from Benchmark Summaries")
+    parser.add_argument("--metrics_dir", type=str, default=None, help="Directory containing summary CSV files")
+    parser.add_argument("--figures_dir", type=str, default=None, help="Directory to save generated figures")
+    return parser.parse_args()
 
 
 def load_json_metrics(json_path):
@@ -12,11 +21,15 @@ def load_json_metrics(json_path):
     return None
 
 def main():
-    ensure_directories()
+    args = parse_args()
+    metrics_dir = Path(args.metrics_dir).resolve() if args.metrics_dir else METRICS_DIR
+    figures_dir = Path(args.figures_dir).resolve() if args.figures_dir else FIGURES_DIR
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    
     sns.set_theme(style="whitegrid", font_scale=1.1)
     
     # 1. Plot Downstream Segmentation Performance Summary (Test Dice & HD95)
-    summary_file = METRICS_DIR / "evaluation_benchmark_summary.csv"
+    summary_file = metrics_dir / "evaluation_benchmark_summary.csv"
     if summary_file.exists():
         df = pd.read_csv(summary_file)
         
@@ -36,7 +49,7 @@ def main():
         ax2.tick_params(axis="x", rotation=15)
         
         plt.tight_layout()
-        out_fig1 = FIGURES_DIR / "segmentation_performance_benchmark.png"
+        out_fig1 = figures_dir / "segmentation_performance_benchmark.png"
         plt.savefig(out_fig1, dpi=300)
         plt.close()
         print(f"Generated figure: {out_fig1}")
@@ -62,15 +75,15 @@ def main():
             ax2.tick_params(axis="x", rotation=15)
             
             plt.tight_layout()
-            out_fig2 = FIGURES_DIR / "representation_collapse_benchmark.png"
+            out_fig2 = figures_dir / "representation_collapse_benchmark.png"
             plt.savefig(out_fig2, dpi=300)
             plt.close()
             print(f"Generated figure: {out_fig2}")
 
     # 3. Low-Data Label Efficiency Curve Plot (1% to 100% Labels)
-    low_data_csv = METRICS_DIR / "low_data_benchmark_summary.csv"
+    low_data_csv = metrics_dir / "low_data_benchmark_summary.csv"
     if not low_data_csv.exists():
-        exp_low_data = METRICS_DIR.parent / "experiments" / "v2_low_data_efficiency" / "metrics" / "low_data_benchmark_summary.csv"
+        exp_low_data = metrics_dir.parent / "experiments" / "v2_low_data_efficiency" / "metrics" / "low_data_benchmark_summary.csv"
         if exp_low_data.exists():
             low_data_csv = exp_low_data
             
@@ -83,15 +96,15 @@ def main():
         plt.ylabel("Downstream Test Dice Score")
         plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
         plt.tight_layout()
-        out_fig_ld = FIGURES_DIR / "low_data_label_efficiency.png"
+        out_fig_ld = figures_dir / "low_data_label_efficiency.png"
         plt.savefig(out_fig_ld, dpi=300)
         plt.close()
         print(f"Generated figure: {out_fig_ld}")
 
     # 4. Out-of-Distribution (OOD) Scanner Generalization Plot
-    ood_csv = METRICS_DIR / "ood_benchmark_summary.csv"
+    ood_csv = metrics_dir / "ood_benchmark_summary.csv"
     if not ood_csv.exists():
-        exp_ood = METRICS_DIR.parent / "experiments" / "v3_ood_generalization" / "metrics" / "ood_benchmark_summary.csv"
+        exp_ood = metrics_dir.parent / "experiments" / "v3_ood_generalization" / "metrics" / "ood_benchmark_summary.csv"
         if exp_ood.exists():
             ood_csv = exp_ood
             
@@ -104,13 +117,13 @@ def main():
         plt.ylabel("Test Dice Score")
         plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
         plt.tight_layout()
-        out_fig_ood = FIGURES_DIR / "ood_domain_generalization.png"
+        out_fig_ood = figures_dir / "ood_domain_generalization.png"
         plt.savefig(out_fig_ood, dpi=300)
         plt.close()
         print(f"Generated figure: {out_fig_ood}")
 
     # 5. BraTS-MEN-RT Cross-Pathology & Missing-Modality OOD Plot
-    men_ood_csv = METRICS_DIR.parent / "experiments" / "v4_men_rt_ood" / "metrics" / "men_rt_ood_benchmark_summary.csv"
+    men_ood_csv = metrics_dir.parent / "experiments" / "v4_men_rt_ood" / "metrics" / "men_rt_ood_benchmark_summary.csv"
     if men_ood_csv.exists():
         men_df = pd.read_csv(men_ood_csv)
         plt.figure(figsize=(11, 5.5))
@@ -120,7 +133,7 @@ def main():
         plt.ylabel("Meningioma Test Dice Score")
         plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
         plt.tight_layout()
-        out_fig_men = FIGURES_DIR / "men_rt_ood_generalization.png"
+        out_fig_men = figures_dir / "men_rt_ood_generalization.png"
         plt.savefig(out_fig_men, dpi=300)
         plt.close()
         print(f"Generated figure: {out_fig_men}")

@@ -78,6 +78,13 @@ class JEPASegmentationModel(nn.Module):
         """Loads pre-trained SSL JEPA encoder weights."""
         self.encoder.load_state_dict(encoder_state_dict)
 
+    def train(self, mode: bool = True):
+        """Override to keep frozen encoder in eval mode (disables dropout, freezes LayerNorm stats)."""
+        super().train(mode)
+        if self.freeze_encoder and mode:
+            self.encoder.eval()
+        return self
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.freeze_encoder:
             with torch.no_grad():

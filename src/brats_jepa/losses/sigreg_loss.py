@@ -8,8 +8,10 @@ from .ijepa_loss import IJEPALoss
 
 class SigRegLoss(nn.Module):
     """
-    SigReg Loss: I-JEPA prediction loss + Sigmoid Variance-Covariance Representation Regularization.
-    Enforces feature variance > gamma and penalizes off-diagonal cross-feature covariance.
+    SigReg Loss: I-JEPA prediction loss + Variance-Covariance Representation Regularization.
+    Enforces feature variance > gamma (hinge loss) and penalizes off-diagonal cross-feature covariance
+    (decorrelation). Follows VICReg-style regularization to prevent representation collapse
+    without requiring an EMA teacher.
     """
     def __init__(
         self,
@@ -27,7 +29,8 @@ class SigRegLoss(nn.Module):
     def _variance_loss(self, z: torch.Tensor) -> torch.Tensor:
         """Hinge variance loss to prevent feature dimension collapse."""
         # z: [B*N, D]
-        std_z = torch.sqrt(z.var(dim=0) + 1e-4)
+        # Use unbiased=False to avoid NaN when N=1
+        std_z = torch.sqrt(z.var(dim=0, unbiased=False) + 1e-4)
         var_loss = torch.mean(F.relu(self.target_std - std_z))
         return var_loss
 
@@ -35,7 +38,8 @@ class SigRegLoss(nn.Module):
         """Penalizes off-diagonal covariance to decorrelate feature dimensions."""
         N, D = z.shape
         z_centered = z - z.mean(dim=0, keepdim=True)
-        cov_matrix = (z_centered.T @ z_centered) / (N - 1)
+        # Guard against division by zero when N=1
+        cov_matrix = (z_centered.T @ z_centered) / max(N - 1, 1)
         
         # Zero out diagonal elements
         diag_mask = torch.eye(D, device=z.device, dtype=torch.bool)

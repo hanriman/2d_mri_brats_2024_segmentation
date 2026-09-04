@@ -13,6 +13,7 @@ class CombinedDiceBCELoss(nn.Module):
         self.bce_loss = nn.BCEWithLogitsLoss()
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        targets = targets.to(logits.dtype)  # BCEWithLogitsLoss requires float targets
         d_loss = self.dice_loss(logits, targets)
         b_loss = self.bce_loss(logits, targets)
         return self.dice_weight * d_loss + self.bce_weight * b_loss

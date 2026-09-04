@@ -5,15 +5,21 @@ import torch.nn.functional as F
 
 def compute_effective_rank(z: torch.Tensor) -> float:
     """
-    Computes the Effective Rank (Entropy of singular values) of latent features z [N, D].
-    Higher value indicates richer, non-collapsed representation space.
+    Computes the Effective Rank (Entropy of normalized eigenvalues of the covariance matrix) of latent features z [N, D].
+    Uses squared singular values (= eigenvalues of the covariance matrix) for a correct measure
+    of representation dimensionality. Higher value indicates richer, non-collapsed representation space.
     """
     z_centered = z - z.mean(dim=0, keepdim=True)
     try:
         _, S, _ = torch.svd(z_centered)
-        singular_values = S / S.sum()
-        # Shannon entropy of normalized singular values
-        entropy = -torch.sum(singular_values * torch.log(singular_values + 1e-12))
+        # Use squared singular values (= eigenvalues of covariance matrix)
+        # Linear singular values overestimate rank and mask true collapse.
+        eigenvalues = S ** 2
+        if eigenvalues.sum() < 1e-12:
+            return 1.0  # Degenerate case: all-zero representations
+        normalized = eigenvalues / eigenvalues.sum()
+        # Shannon entropy of normalized eigenvalues
+        entropy = -torch.sum(normalized * torch.log(normalized + 1e-12))
         eff_rank = torch.exp(entropy).item()
         return eff_rank
     except (RuntimeError, ValueError):

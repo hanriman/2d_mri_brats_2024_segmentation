@@ -11,6 +11,7 @@ data/raw/
 data/interim/
 data/processed/
 outputs/
+dist_kaggle/
 runs/
 wandb/
 .hydra/
@@ -29,6 +30,8 @@ Thumbs.db
 .idea/
 
 # LaTeX Build Artifacts (Keep .tex, .bib, .cls, .pdf figures tracked)
+docs/
+paper/
 paper/latex/*.aux
 paper/latex/*.bbl
 paper/latex/*.blg

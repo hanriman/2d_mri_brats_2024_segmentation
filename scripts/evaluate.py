@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 
 from brats_jepa.config import (
     CHECKPOINTS_DIR,
+    DEFAULT_NUM_WORKERS,
     LOGS_DIR,
     METRICS_DIR,
     OUTPUTS_DIR,
@@ -27,6 +28,13 @@ def parse_args():
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Directory containing model checkpoints")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory to save summary metrics")
     parser.add_argument("--exp_version", type=str, default=None, help="Versioned experiment directory tag")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--num_workers", type=int, default=DEFAULT_NUM_WORKERS,
+                        help="Number of DataLoader worker processes (default: 2 on Linux, 0 on macOS)")
+    parser.add_argument("--cache_data", action="store_true", default=True,
+                        help="Cache loaded slices in RAM to eliminate disk I/O bottlenecks")
+    parser.add_argument("--no_cache_data", action="store_false", dest="cache_data",
+                        help="Disable RAM caching of slices")
     parser.add_argument("--device", type=str, default="auto", help="Device")
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches for quick local smoke testing")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -36,6 +44,10 @@ def main():
     args = parse_args()
     set_seed(args.seed)
     device = get_device(args.device)
+
+    # Enable cuDNN benchmark for static-sized convolutions on CUDA
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
 
     # Resolve output and checkpoint directories
     if args.exp_version:
@@ -54,12 +66,22 @@ def main():
     logger = get_logger("evaluate", logs_dir / "evaluate.log")
     logger.info(f"Running evaluation benchmark on device: {device}")
     logger.info(f"Loading checkpoints from: {ckpt_dir}")
+    logger.info(f"DataLoader settings: num_workers={args.num_workers}, cache_in_memory={args.cache_data}")
 
     metadata_path = Path(args.metadata_csv).resolve() if args.metadata_csv else get_metadata_path("brats_gli_2d")
     logger.info(f"Using test dataset metadata from: {metadata_path}")
 
-    test_ds = BraTS2DDataset(metadata_csv=metadata_path, split="test")
-    test_loader = DataLoader(test_ds, batch_size=8, shuffle=False, num_workers=0)
+    test_ds = BraTS2DDataset(metadata_csv=metadata_path, split="test", cache_in_memory=args.cache_data)
+    use_cuda = (device.type == "cuda")
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=use_cuda,
+        persistent_workers=(args.num_workers > 0),
+        prefetch_factor=2 if args.num_workers > 0 else None,
+    )
     num_samples = len(test_ds)
 
     logger.info(f"Loaded {num_samples} test slices.")
@@ -88,7 +110,8 @@ def main():
             for batch_idx, batch in enumerate(test_loader):
                 if args.max_batches and batch_idx >= args.max_batches:
                     break
-                images, labels = batch["image"].to(device), batch["label"].to(device)
+                images = batch["image"].to(device, non_blocking=True)
+                labels = batch["label"].to(device, non_blocking=True)
                 eval_samples += images.shape[0]
                 logits = unet(images)
                 m = compute_segmentation_metrics(logits, labels)
@@ -144,7 +167,8 @@ def main():
             for batch_idx, batch in enumerate(test_loader):
                 if args.max_batches and batch_idx >= args.max_batches:
                     break
-                images, labels = batch["image"].to(device), batch["label"].to(device)
+                images = batch["image"].to(device, non_blocking=True)
+                labels = batch["label"].to(device, non_blocking=True)
                 eval_samples += images.shape[0]
                 logits = nnunet(images)
                 m = compute_segmentation_metrics(logits, labels)
@@ -205,7 +229,7 @@ def main():
                 for batch_idx, batch in enumerate(test_loader):
                     if args.max_batches and batch_idx >= args.max_batches:
                         break
-                    images = batch["image"].to(device)
+                    images = batch["image"].to(device, non_blocking=True)
                     tokens = ssl_model.context_encoder(images)
                     rep_metrics = compute_representation_collapse_metrics(tokens)
                     ranks.append(rep_metrics["effective_rank"])
@@ -231,7 +255,8 @@ def main():
                 for batch_idx, batch in enumerate(test_loader):
                     if args.max_batches and batch_idx >= args.max_batches:
                         break
-                    images, labels = batch["image"].to(device), batch["label"].to(device)
+                    images = batch["image"].to(device, non_blocking=True)
+                    labels = batch["label"].to(device, non_blocking=True)
                     eval_samples += images.shape[0]
                     logits = model(images)
                     m = compute_segmentation_metrics(logits, labels)

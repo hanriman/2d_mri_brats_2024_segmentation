@@ -12,6 +12,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 IN_KAGGLE = Path("/kaggle/working").exists() or Path("/kaggle/input").exists()
 IN_COLAB = "google.colab" in sys.modules or (Path("/content").exists() and not IN_KAGGLE)
 
+DEFAULT_NUM_WORKERS = 2 if not sys.platform.startswith("darwin") else 0
+
 # Standard directory locations
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"

@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 
 from brats_jepa.config import (
     CHECKPOINTS_DIR,
+    DEFAULT_NUM_WORKERS,
     LOGS_DIR,
     METRICS_DIR,
     ensure_directories,
@@ -26,6 +27,12 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
     parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv manifest file")
     parser.add_argument("--output_dir", type=str, default=None, help="Custom output directory for checkpoints and logs")
+    parser.add_argument("--num_workers", type=int, default=DEFAULT_NUM_WORKERS,
+                        help="Number of DataLoader worker processes (default: 2 on Linux, 0 on macOS)")
+    parser.add_argument("--cache_data", action="store_true", default=True,
+                        help="Cache loaded slices in RAM to eliminate disk I/O bottlenecks")
+    parser.add_argument("--no_cache_data", action="store_false", dest="cache_data",
+                        help="Disable RAM caching of slices")
     parser.add_argument("--amp", action="store_true", default=True, help="Enable automatic mixed precision on CUDA")
     parser.add_argument("--no_amp", action="store_false", dest="amp", help="Disable automatic mixed precision")
     parser.add_argument("--device", type=str, default="auto", help="Device")
@@ -37,6 +44,10 @@ def main():
     args = parse_args()
     set_seed(args.seed)
     device = get_device(args.device)
+
+    # Enable cuDNN benchmark for static-sized convolutions on CUDA
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
 
     # Output directory setup
     if args.output_dir:
@@ -53,15 +64,33 @@ def main():
 
     logger = get_logger("train_unet", logs_dir / "train_unet.log")
     logger.info(f"Training 2D ResUNet baseline on device: {device}")
+    logger.info(f"DataLoader settings: num_workers={args.num_workers}, cache_in_memory={args.cache_data}")
 
     metadata_path = Path(args.metadata_csv).resolve() if args.metadata_csv else get_metadata_path("brats_gli_2d")
     logger.info(f"Using dataset metadata from: {metadata_path}")
 
-    train_ds = BraTS2DDataset(metadata_csv=metadata_path, split="train")
-    val_ds = BraTS2DDataset(metadata_csv=metadata_path, split="val")
+    train_ds = BraTS2DDataset(metadata_csv=metadata_path, split="train", cache_in_memory=args.cache_data)
+    val_ds = BraTS2DDataset(metadata_csv=metadata_path, split="val", cache_in_memory=args.cache_data)
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    use_cuda = (device.type == "cuda")
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=use_cuda,
+        persistent_workers=(args.num_workers > 0),
+        prefetch_factor=2 if args.num_workers > 0 else None,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=use_cuda,
+        persistent_workers=(args.num_workers > 0),
+        prefetch_factor=2 if args.num_workers > 0 else None,
+    )
 
     model = BraTS2DUNet(in_channels=4, out_channels=1).to(device)
     loss_fn = CombinedDiceBCELoss(dice_weight=1.0, bce_weight=1.0)
@@ -86,8 +115,8 @@ def main():
         for batch_idx, batch in enumerate(train_loader):
             if args.max_batches and batch_idx >= args.max_batches:
                 break
-            images = batch["image"].to(device)
-            labels = batch["label"].to(device)
+            images = batch["image"].to(device, non_blocking=True)
+            labels = batch["label"].to(device, non_blocking=True)
 
             optimizer.zero_grad()
             with torch.amp.autocast(device_type=device.type, enabled=use_amp):
@@ -116,8 +145,8 @@ def main():
             for batch_idx, batch in enumerate(val_loader):
                 if args.max_batches and batch_idx >= args.max_batches:
                     break
-                images = batch["image"].to(device)
-                labels = batch["label"].to(device)
+                images = batch["image"].to(device, non_blocking=True)
+                labels = batch["label"].to(device, non_blocking=True)
 
                 with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                     logits = model(images)

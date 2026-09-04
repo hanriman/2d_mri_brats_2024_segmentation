@@ -9,7 +9,15 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 
-from brats_jepa.config import CHECKPOINTS_DIR, DATA_DIR, LOGS_DIR, METRICS_DIR, ensure_directories, get_metadata_path
+from brats_jepa.config import (
+    CHECKPOINTS_DIR,
+    DATA_DIR,
+    DEFAULT_NUM_WORKERS,
+    LOGS_DIR,
+    METRICS_DIR,
+    ensure_directories,
+    get_metadata_path,
+)
 from brats_jepa.data import BraTS2DDataset
 from brats_jepa.losses import CombinedDiceBCELoss, DeepSupervisionLoss
 from brats_jepa.metrics import compute_segmentation_metrics
@@ -43,6 +51,12 @@ def parse_args():
     parser.add_argument("--exp_version", type=str, default="v2_low_data_efficiency", help="Experiment version directory tag")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Directory to search for pre-trained checkpoints")
     parser.add_argument("--output_dir", type=str, default=None, help="Output root directory")
+    parser.add_argument("--num_workers", type=int, default=DEFAULT_NUM_WORKERS,
+                        help="Number of DataLoader worker processes (default: 2 on Linux, 0 on macOS)")
+    parser.add_argument("--cache_data", action="store_true", default=True,
+                        help="Cache loaded slices in RAM to eliminate disk I/O bottlenecks")
+    parser.add_argument("--no_cache_data", action="store_false", dest="cache_data",
+                        help="Disable RAM caching of slices")
     parser.add_argument("--amp", action="store_true", help="Enable CUDA AMP (mixed precision)")
     parser.add_argument("--device", type=str, default="auto", help="Device")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -52,6 +66,10 @@ def main():
     args = parse_args()
     set_seed(args.seed)
     device = get_device(args.device)
+
+    # Enable cuDNN benchmark for static-sized convolutions on CUDA
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
     
     # Versioned experiment directories
     base_out = Path(args.output_dir) if args.output_dir else Path("outputs")
@@ -64,6 +82,7 @@ def main():
         
     logger = get_logger("evaluate_low_data", logs_dir / "evaluate_low_data.log")
     logger.info(f"Starting Low-Data Label Efficiency Benchmark ({args.exp_version}) on device: {device}")
+    logger.info(f"DataLoader settings: num_workers={args.num_workers}, cache_in_memory={args.cache_data}")
     
     if args.metadata_csv:
         metadata_path = Path(args.metadata_csv).resolve()
@@ -71,9 +90,19 @@ def main():
         metadata_path = get_metadata_path("brats_gli_2d")
         
     logger.info(f"Using dataset metadata: {metadata_path}")
-    full_train_ds = BraTS2DDataset(metadata_csv=metadata_path, split="train")
-    test_ds = BraTS2DDataset(metadata_csv=metadata_path, split="test")
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    full_train_ds = BraTS2DDataset(metadata_csv=metadata_path, split="train", cache_in_memory=args.cache_data)
+    test_ds = BraTS2DDataset(metadata_csv=metadata_path, split="test", cache_in_memory=args.cache_data)
+
+    use_cuda = (device.type == "cuda")
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=use_cuda,
+        persistent_workers=(args.num_workers > 0),
+        prefetch_factor=2 if args.num_workers > 0 else None,
+    )
     
     total_train_samples = len(full_train_ds)
     label_fractions = [0.01, 0.05, 0.10, 0.25, 0.50, 1.00]
@@ -95,7 +124,15 @@ def main():
         indices = rng.choice(total_train_samples, size=n_samples, replace=False).tolist()
         
         sub_train_ds = Subset(full_train_ds, indices)
-        train_loader = DataLoader(sub_train_ds, batch_size=min(args.batch_size, n_samples), shuffle=True, num_workers=0)
+        train_loader = DataLoader(
+            sub_train_ds,
+            batch_size=min(args.batch_size, n_samples),
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=use_cuda,
+            persistent_workers=(args.num_workers > 0),
+            prefetch_factor=2 if args.num_workers > 0 else None,
+        )
         
         logger.info(f"\n" + "="*80)
         logger.info(f"EVALUATING LABEL FRACTION: {frac*100:.0f}% ({n_samples}/{total_train_samples} training slices)")
@@ -112,8 +149,8 @@ def main():
             unet.train()
             for b in train_loader:
                 opt_u.zero_grad()
-                imgs = mod_drop(b["image"].to(device))
-                targets = b["label"].to(device)
+                imgs = mod_drop(b["image"].to(device, non_blocking=True))
+                targets = b["label"].to(device, non_blocking=True)
                 with torch.amp.autocast('cuda', enabled=use_amp):
                     preds = unet(imgs)
                     l = loss_fn_bce(preds, targets)
@@ -127,8 +164,8 @@ def main():
         with torch.no_grad():
             for b in test_loader:
                 with torch.amp.autocast('cuda', enabled=use_amp):
-                    preds = unet(b["image"].to(device))
-                m = compute_segmentation_metrics(preds, b["label"].to(device))
+                    preds = unet(b["image"].to(device, non_blocking=True))
+                m = compute_segmentation_metrics(preds, b["label"].to(device, non_blocking=True))
                 d_list.append(m["dice"])
                 i_list.append(m["iou"])
                 h_list.append(m["hd95"])
@@ -159,8 +196,8 @@ def main():
             nnunet.train()
             for b in train_loader:
                 opt_nn.zero_grad()
-                imgs = mod_drop(b["image"].to(device))
-                targets = b["label"].to(device)
+                imgs = mod_drop(b["image"].to(device, non_blocking=True))
+                targets = b["label"].to(device, non_blocking=True)
                 with torch.amp.autocast('cuda', enabled=use_amp):
                     preds = nnunet(imgs)
                     l = loss_fn_ds(preds, targets)
@@ -174,8 +211,8 @@ def main():
         with torch.no_grad():
             for b in test_loader:
                 with torch.amp.autocast('cuda', enabled=use_amp):
-                    preds = nnunet(b["image"].to(device))
-                m = compute_segmentation_metrics(preds, b["label"].to(device))
+                    preds = nnunet(b["image"].to(device, non_blocking=True))
+                m = compute_segmentation_metrics(preds, b["label"].to(device, non_blocking=True))
                 d_list.append(m["dice"])
                 i_list.append(m["iou"])
                 h_list.append(m["hd95"])
@@ -223,8 +260,8 @@ def main():
                 model.train()
                 for b in train_loader:
                     opt_j.zero_grad()
-                    imgs = mod_drop(b["image"].to(device))
-                    targets = b["label"].to(device)
+                    imgs = mod_drop(b["image"].to(device, non_blocking=True))
+                    targets = b["label"].to(device, non_blocking=True)
                     with torch.amp.autocast('cuda', enabled=use_amp):
                         preds = model(imgs)
                         l = loss_fn_bce(preds, targets)
@@ -238,8 +275,8 @@ def main():
             with torch.no_grad():
                 for b in test_loader:
                     with torch.amp.autocast('cuda', enabled=use_amp):
-                        preds = model(b["image"].to(device))
-                    m = compute_segmentation_metrics(preds, b["label"].to(device))
+                        preds = model(b["image"].to(device, non_blocking=True))
+                    m = compute_segmentation_metrics(preds, b["label"].to(device, non_blocking=True))
                     d_list.append(m["dice"])
                     i_list.append(m["iou"])
                     h_list.append(m["hd95"])

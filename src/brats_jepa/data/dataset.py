@@ -19,12 +19,15 @@ class BraTS2DDataset(Dataset):
         split: str = "train",
         transforms: Callable | None = None,
         jepa_masking: Callable | None = None,
+        cache_in_memory: bool = False,
     ):
         super().__init__()
         self.metadata_csv = Path(metadata_csv).resolve()
         self.split = split
         self.data_root = self.metadata_csv.parent
         self.jepa_masking = jepa_masking
+        self.cache_in_memory = cache_in_memory
+        self._cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         
         if not self.metadata_csv.exists():
             raise FileNotFoundError(f"Metadata manifest not found at: {self.metadata_csv}")
@@ -44,12 +47,16 @@ class BraTS2DDataset(Dataset):
         record = self.records[idx]
         patient_id = record["patient_id"]
         
-        file_name = Path(record["file_path"]).name
-        npz_path = self.data_root / file_name
-        data = np.load(str(npz_path))
-        
-        image = data["image"]  # shape: [4, H, W] (T1, T1c, T2, FLAIR)
-        mask = data["mask"]    # shape: [H, W] (BraTS discrete tumor labels 0,1,2,3)
+        if self.cache_in_memory and idx in self._cache:
+            image, mask = self._cache[idx]
+        else:
+            file_name = Path(record["file_path"]).name
+            npz_path = self.data_root / file_name
+            data = np.load(str(npz_path))
+            image = data["image"]  # shape: [4, H, W] (T1, T1c, T2, FLAIR)
+            mask = data["mask"]    # shape: [H, W] (BraTS discrete tumor labels 0,1,2,3)
+            if self.cache_in_memory:
+                self._cache[idx] = (image, mask)
         
         # Binarize mask for Whole Tumor (WT) segmentation (1 = active tumor, 0 = background)
         binary_mask = (mask > 0).astype(np.float32)

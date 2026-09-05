@@ -5,7 +5,7 @@
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage{hyperref}
+\usepackage[hypertexnames=false]{hyperref}
 \usepackage{url}
 \usepackage{booktabs}
 \usepackage{amsfonts}
@@ -55,29 +55,43 @@ In this paper, we provide a complete mathematical and empirical breakdown of JEP
 
 Let $X \in \mathbb{R}^{B \times 4 \times H \times W}$ represent a batch of 2D axial MRI slices with spatial dimensions $H = W = 240$ and $C = 4$ co-registered sequence channels: $X = [X_{\text{T1}}, X_{\text{T1c}}, X_{\text{T2}}, X_{\text{FLAIR}}]$. 
 
+\paragraph{Physical Sequence Characteristics \& Clinical Tumor Pathophysiology}
+Glioma diagnosis and boundary delineation require multi-parametric MRI because different pulse sequences probe orthogonal biological tissue properties \citep{brats2024}:
+\begin{itemize}
+    \item \textbf{T1-weighted (T1)}: Characterized by short repetition time (TR) and echo time (TE), T1 reflects longitudinal spin-lattice relaxation ($T_1$). It yields sharp contrast between healthy gray matter, white matter, and cerebrospinal fluid (CSF), providing anatomical reference geometry.
+    \item \textbf{Contrast-Enhanced T1-weighted (T1c)}: Administered via intravenous Gadolinium-based contrast agents (e.g., Gd-DTPA). Paramagnetic gadolinium ions accelerate local water proton $T_1$ relaxation, producing intense signal enhancement strictly where the blood-brain barrier (BBB) is structurally disrupted by tumor neovascularization. T1c delineates the actively proliferating, viable angiogenic tumor boundary.
+    \item \textbf{T2-weighted (T2)}: Utilizing long TR and TE, T2 probes transverse spin-spin relaxation ($T_2$). It is highly sensitive to free and bound water accumulation, clearly depicting diffuse hyperintense vasogenic edema and bulk mass effect.
+    \item \textbf{Fluid-Attenuated Inversion Recovery (FLAIR)}: Applies an initial $180^\circ$ inversion pulse with an inversion time $TI \approx 2000\,\text{ms}$ precisely timed to the null point of free water. By suppressing the bright signal of ventricular CSF, FLAIR isolates non-enhancing peritumoral infiltrative edema and satellite tumor margins that would otherwise be masked by adjacent ventricles.
+\end{itemize}
+
 Prior to slice extraction, non-zero brain tissue voxels are Z-score normalized independently per 3D volume sequence:
 \begin{equation}
     \hat{X}_{c}(v) = \frac{X_c(v) - \mu_c}{\sigma_c + \epsilon}, \qquad \forall c \in \{\text{T1}, \text{T1c}, \text{T2}, \text{FLAIR}\}
 \end{equation}
-where $\mu_c$ and $\sigma_c$ are the mean and standard deviation of non-zero voxels in sequence $c$, and $\epsilon = 10^{-8}$ prevents division by zero.
+where $\mu_c$ and $\sigma_c$ denote the empirical mean and standard deviation computed strictly over non-zero intracranial voxels in volume sequence $c$, and $\epsilon = 10^{-8}$ ensures numerical stability.
 
-\paragraph{Random Modality Dropout (RMD) with Non-Empty Fallback}
-To prevent downstream models from developing brittle co-dependencies on all four modalities simultaneously, we introduce \textbf{Random Modality Dropout} during training. Each modality channel for sample $b$ is masked independently according to a Bernoulli trial with drop probability $p_{\text{drop}} \in [0.0, 1.0]$:
-\begin{equation}
-    \mathbf{M}_{b, c} \sim \text{Bernoulli}(1 - p_{\text{drop}}), \qquad \forall b \in \{1, \dots, B\}, \, c \in \{1, \dots, 4\}
-\end{equation}
-Because completely dropping all 4 modalities for a slice would yield an uninformative zero tensor and cause zero-gradient anomalies, we enforce a strict \emph{guaranteed non-empty fallback}:
-\begin{equation}
-    \mathbf{M}_{b, :} \leftarrow \begin{cases} 
-        \mathbf{e}_{c^*}, & \text{if } \sum_{c=1}^4 \mathbf{M}_{b, c} = 0, \quad c^* \sim \text{Uniform}(\{1, 2, 3, 4\}) \\
-        \mathbf{M}_{b, :}, & \text{otherwise}
-    \end{cases}
-\end{equation}
-where $\mathbf{e}_{c^*}$ is a one-hot vector activating modality $c^*$. The final augmented slice is computed via broadcast element-wise multiplication:
-\begin{equation}
-    \tilde{X}_{b, c, h, w} = \hat{X}_{b, c, h, w} \cdot \mathbf{M}_{b, c}
-\end{equation}
-During standard inference and validation, Modality Dropout is deactivated ($\mathbf{M}_{b, c} = 1$).
+\paragraph{Random Modality Dropout (RMD) with Guaranteed Non-Empty Fallback}
+In routine clinical oncology, complete 4-sequence acquisitions are frequently compromised by emergency patient agitation, metallic implants, acquisition time constraints, or severe renal impairment contraindicating gadolinium injection (nephrogenic systemic fibrosis) \citep{havaei2017brain,dorent2019hetero}. Models naively trained on complete 4-channel tensors develop brittle inter-channel co-dependencies and collapse when modalities are omitted.
+
+To instill intrinsic modality invariance during training, we propose \textbf{Random Modality Dropout (RMD)} with a guaranteed non-empty fallback mechanism, formalized in Algorithm~\ref{alg:modality_dropout}.
+
+\begin{algorithm}[H]
+\caption{Random Modality Dropout with Guaranteed Non-Empty Fallback}
+\label{alg:modality_dropout}
+\begin{algorithmic}[1]
+\Require Normalized multi-channel slice batch $\hat{X} \in \mathbb{R}^{B \times C \times H \times W}$, dropout probability $p_{\text{drop}} \in [0, 1)$, training flag $\tau \in \{0, 1\}$.
+\Ensure Modality-augmented batch $\tilde{X} \in \mathbb{R}^{B \times C \times H \times W}$.
+\If{$\tau = 0$ \textbf{or} $p_{\text{drop}} \le 0$}
+    \State \Return $\hat{X}$ \Comment{Deactivated during inference and validation}
+\EndIf
+\State Sample channel mask: $\mathbf{M} \leftarrow \mathbb{I}\left( \mathbf{U} > p_{\text{drop}} \right)$ where $\mathbf{U} \sim \mathcal{U}(0, 1)^{B \times C \times 1 \times 1}$
+\State Identify completely zeroed slices: $\mathbf{A}_{\text{zero}} \leftarrow \left( \sum_{c=1}^C \mathbf{M}_{:, c, 1, 1} == 0 \right) \in \{0, 1\}^B$
+\State Sample fallback channels: $c^* \sim \text{Uniform}(\{1, \dots, C\})^B$
+\State Construct fallback one-hot mask: $\mathbf{M}_{\text{fallback}} \leftarrow \text{OneHot}(c^*) \in \mathbb{R}^{B \times C \times 1 \times 1}$
+\State Reconcile mask: $\mathbf{M} \leftarrow \text{where}(\mathbf{A}_{\text{zero}}, \, \mathbf{M}_{\text{fallback}}, \, \mathbf{M})$
+\State \Return $\tilde{X} = \hat{X} \odot \mathbf{M}$ \Comment{Element-wise broadcast multiplication}
+\end{algorithmic}
+\end{algorithm}
 
 \paragraph{Spatial Data Augmentation Randomization}
 During downstream fine-tuning, training slices undergo stochastic spatial transformations:
@@ -159,7 +173,7 @@ Because context indices $\mathcal{I}_{\text{ctx}}$ and target indices $\mathcal{
 and similarly for target positional embeddings $\mathbf{P}_{\text{tgt}}$ using $\mathcal{I}_{\text{tgt}}$. 
 
 \paragraph{Predictor Forward Pass}
-The target mask sequence is constructed as $\mathbf{M}_{\text{tgt}} = \mathbf{e}_{\text{mask}}.\text{expand}(B, N_{\text{tgt}}, -1) + \mathbf{P}_{\text{tgt}}$. The context and target tokens are concatenated along the sequence length dimension:
+We construct the target mask token sequence as $\mathbf{M}_{\text{tgt}} = \mathbf{e}_{\text{mask}} + \mathbf{P}_{\text{tgt}}$ expanded across batch and target dimensions $(B, N_{\text{tgt}}, D_{\text{pred}})$. The context and target tokens are concatenated along the sequence dimension:
 \begin{equation}
     \mathbf{Z}_{\text{pred}}^{(0)} = \left[ (\mathbf{Z}_{\text{ctx, proj}} + \mathbf{P}_{\text{ctx}}) \,;\, \mathbf{M}_{\text{tgt}} \right] \in \mathbb{R}^{B \times (N_{\text{ctx}} + N_{\text{tgt}}) \times 192}
 \end{equation}
@@ -174,36 +188,101 @@ Standard I-JEPA \citep{assran2023ijepa} maintains two encoders: an online contex
 \begin{equation}
     Y_{\text{tgt}} = E_{\bar{\theta}}(X)[:, \mathbf{I}_{\text{tgt}}, :] \in \mathbb{R}^{B \times N_{\text{tgt}} \times 384}
 \end{equation}
-The prediction loss is computed using Smooth $L_1$ (Huber) loss between predicted tokens $\hat{Y}_{\text{tgt}}$ and teacher target tokens $Y_{\text{tgt}}$:
+
+\paragraph{Asymmetric Target Normalization}
+Following the official I-JEPA formulation \citep{assran2023ijepa}, a crucial architectural design choice is that \textbf{only target tokens are Layer-Normalized}, whereas predicted tokens $\hat{Y}_{\text{tgt}}$ remain unnormalized:
 \begin{equation}
-    \mathcal{L}_{\text{I-JEPA}}(\theta, \phi) = \frac{1}{B \cdot N_{\text{tgt}} \cdot D} \sum_{b=1}^B \sum_{i=1}^{N_{\text{tgt}}} \sum_{j=1}^D \text{Smooth}_{L_1}\left(\hat{Y}_{b, i, j} - Y_{b, i, j}\right)
+    \tilde{Y}_{\text{tgt}} = \text{LayerNorm}(Y_{\text{tgt}}) = \frac{Y_{\text{tgt}} - \mu(Y_{\text{tgt}})}{\sqrt{\sigma^2(Y_{\text{tgt}}) + \epsilon}} \odot \gamma + \beta
 \end{equation}
-where Smooth $L_1$ is defined as:
+If predictions $\hat{Y}_{\text{tgt}}$ were also normalized, the predictor could artificially alter its internal weight magnitudes without incurring gradient penalties, causing representational instability. Normalizing the teacher targets establishes a standardized, zero-mean, unit-variance coordinate reference for the online network.
+
+\paragraph{Prediction Objective and Huber Loss Robustness}
+The prediction loss is computed using Smooth $L_1$ (Huber) loss between predicted tokens $\hat{Y}_{\text{tgt}}$ and normalized teacher tokens $\tilde{Y}_{\text{tgt}}$:
+\begin{equation}
+    \mathcal{L}_{\text{I-JEPA}}(\theta, \phi) = \frac{1}{B \cdot N_{\text{tgt}} \cdot D} \sum_{b=1}^B \sum_{i=1}^{N_{\text{tgt}}} \sum_{j=1}^D \text{Smooth}_{L_1}\left(\hat{Y}_{b, i, j} - \tilde{Y}_{b, i, j}\right)
+\end{equation}
+where Smooth $L_1$ transitions between quadratic and linear penalties:
 \begin{equation}
     \text{Smooth}_{L_1}(x) = \begin{cases} 0.5 x^2, & \text{if } |x| < 1.0 \\ |x| - 0.5, & \text{otherwise} \end{cases}
 \end{equation}
+In multi-modal brain MRI, hyperintense necrotic cores, contrast-enhancing margins, or skull-stripping boundary artifacts produce heavy-tailed representation residuals during early pre-training epochs. Standard mean squared error (MSE, $L_2$) produces quadratic gradient penalties that explode on outliers, whereas Smooth $L_1$ bounds the gradient magnitude to $\pm 1$, stabilizing optimization.
 
-The target teacher encoder parameters $\bar{\theta}$ do not receive gradients ($\nabla_{\bar{\theta}} \mathcal{L} = 0$). Instead, they are updated at training step $t$ via Exponential Moving Average (EMA) momentum $m \in [0.996, 1.0]$:
+\paragraph{Teacher Non-Differentiability \& Evaluation Mode Enforcement}
+The target teacher encoder parameters $\bar{\theta}$ do not receive gradients ($\nabla_{\bar{\theta}} \mathcal{L} = 0$). Instead, they are updated at training step $t$ via Exponential Moving Average (EMA) momentum $m \in [0.996, 1.0]$ \citep{grill2020bootstrap,assran2023ijepa}:
 \begin{equation}
     \bar{\theta}_t \leftarrow m \bar{\theta}_{t-1} + (1 - m) \theta_t
 \end{equation}
+Crucially, during training, the teacher encoder must strictly remain in evaluation mode:
+\begin{equation}
+    E_{\bar{\theta}}.\text{eval}() \equiv \text{True}, \qquad \forall \text{ training iterations } t
+\end{equation}
+This overrides the global PyTorch model training state to guarantee that dropout layers in $E_{\bar{\theta}}$ are deactivated and running statistics remain stationary, ensuring completely deterministic target generation.
 
 \subsection{SigReg JEPA Mathematical Formulation (Heuristic-Free Single-Encoder)}
 
-SigReg JEPA (LeJEPA) \citep{balestriero2025lejepa} completely eliminates the EMA teacher target encoder $E_{\bar{\theta}}$. Instead, target representations are generated directly by the online encoder $E_\theta$ under \texttt{torch.no\_grad()}.
+SigReg JEPA (LeJEPA) \citep{balestriero2025lejepa} completely eliminates the EMA teacher target encoder $E_{\bar{\theta}}$, executing self-supervised pre-training using a single encoder $E_\theta$. Target representations are generated directly by the online encoder $E_\theta$ under \texttt{torch.no\_grad()} without momentum copies.
 
-To mathematically prevent representation collapse without an EMA teacher, Sketched Isotropic Gaussian Regularization (SIGReg) maps representations through a 2-layer Projector MLP $g_\psi: \mathbb{R}^D \to \mathbb{R}^{d_p}$ ($d_p = 128$) and tests the projected representations against a standard isotropic Gaussian $\mathcal{N}(0, \mathbf{I}_{d_p})$ via the Cram\'er-Wold theorem:
+\paragraph{Cram\'er-Wold Theorem and Projector MLP}
+To mathematically prevent representation collapse without an EMA teacher, Sketched Isotropic Gaussian Regularization (SIGReg) enforces that the empirical distribution of representations matches a standard isotropic Gaussian $\mathcal{N}(0, \mathbf{I}_{d_p})$ \citep{balestriero2025lejepa}.
+
+By the \textbf{Cram\'er-Wold theorem} \citep{cramer1936theorems}, a multivariate probability measure on $\mathbb{R}^{d_p}$ is uniquely determined by the family of its 1D marginal distributions under all 1D linear projections onto the unit hypersphere $\mathbb{S}^{d_p - 1}$. To isolate this regularization from downstream spatial features, representations pass through a 2-layer Projector MLP $g_\psi: \mathbb{R}^D \to \mathbb{R}^{d_p}$ ($d_p = 128$):
 \begin{equation}
-    \mathcal{L}_{\text{SigReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{SIGReg}} \cdot \mathcal{T}_{\text{EP}}(g_\psi(Z))
+    Z_{\text{proj}} = g_\psi(Z_{\text{ctx}}) = \text{Linear}_{1024 \to 128}\left(\text{GELU}\left(\text{LayerNorm}\left(\text{Linear}_{384 \to 1024}(Z_{\text{ctx}})\right)\right)\right)
 \end{equation}
-where $M$ random unit projection vectors $u_m \in \mathbb{S}^{d_p - 1}$ ($m=1,\dots,256$) are sampled on the unit hypersphere ($u \sim \mathcal{N}(0, \mathbf{I})$, $u_m = u / \|u\|_2$), yielding 1D projections $p_m = g_\psi(Z) u_m \in \mathbb{R}^N$. The 1D Epps--Pulley empirical characteristic function test statistic $\mathcal{T}_{\text{EP}}$ evaluates the distance to $\phi(t) = \exp(-t^2/2)$ via trapezoidal quadrature on $[0, t_{\text{max}}]$ ($t_{\text{max}}=3.0$, $Q=17$ knots):
+
+\paragraph{Epps--Pulley Test Statistic \& Quadrature}
+We sample $M = 256$ random projection directions on the unit hypersphere: $u_m = v / \|v\|_2$, where $v \sim \mathcal{N}(0, \mathbf{I}_{d_p})$. The 1D projections for $N = B \cdot N_{\text{ctx}}$ tokens are $p_m = Z_{\text{proj}} u_m \in \mathbb{R}^N$.
+
+The \textbf{Epps--Pulley test statistic} \citep{epps1983test} compares the empirical characteristic function (ECF) $\hat{\phi}_N(t) = \frac{1}{N} \sum_{n=1}^N \exp(i t p_n)$ to the analytical standard Gaussian characteristic function $\phi_0(t) = \exp(-t^2 / 2)$ weighted by the standard normal density $d\mu(t) = \exp(-t^2/2) dt$:
 \begin{equation}
-    \mathcal{T}_{\text{EP}}(p) = N \int_0^{t_{\text{max}}} \left| \frac{1}{N} \sum_{n=1}^N e^{i t p_n} - e^{-t^2/2} \right|^2 \cdot 2 e^{-t^2/2} \, dt
+    \mathcal{T}_{\text{EP}}(p) = N \int_{-\infty}^{\infty} |\hat{\phi}_N(t) - \phi_0(t)|^2 d\mu(t)
 \end{equation}
+Exploiting symmetry across $t \in [-t_{\text{max}}, t_{\text{max}}]$, the integral is evaluated over $[0, t_{\text{max}}]$ ($t_{\text{max}} = 3.0$) via trapezoidal quadrature with $Q = 17$ knot points and step size $\Delta t = t_{\text{max}} / (Q - 1)$:
+\begin{equation}
+    w_0 = w_{Q-1} = \Delta t, \qquad w_k = 2 \Delta t \quad (k = 1, \dots, Q-2)
+\end{equation}
+The discretized statistic evaluates to:
+\begin{equation}
+    \mathcal{T}_{\text{EP}}(p) = N \sum_{k=0}^{Q-1} w_k e^{-t_k^2/2} \left[ \left( \frac{1}{N} \sum_{n=1}^N \cos(t_k p_n) - e^{-t_k^2/2} \right)^2 + \left( \frac{1}{N} \sum_{n=1}^N \sin(t_k p_n) \right)^2 \right]
+\end{equation}
+
+\paragraph{Mathematical Derivation of the Sample Count Scaling Factor $N$}
+A critical implementation subtlety in Epps--Pulley regularization involves the scaling factor $N$:
+\begin{equation}
+    \frac{\partial \hat{\phi}_N(t)}{\partial p_i} = \frac{\partial}{\partial p_i} \left( \frac{1}{N} \sum_{n=1}^N \exp(i t p_n) \right) = \frac{i t}{N} \exp(i t p_i)
+\end{equation}
+Because the derivative of the sample average ECF contains an intrinsic $\frac{1}{N}$ factor, the gradient of the squared error integral without $N$ scales as $\mathcal{O}(1/N)$. In mini-batch pre-training with $N = B \cdot N_{\text{ctx}} = 8 \times 96 = 768$ tokens, omitting $N$ dilutes the regularization gradient by $1/768$, causing representation gradients to vanish ($\|\nabla_z \mathcal{L}\| \approx 0.00019$). Multiplying by $N$ cancels the $\frac{1}{N}$ derivative denominator:
+\begin{equation}
+    \nabla_{p_i} \left[ N \cdot |\hat{\phi}_N(t) - \phi_0(t)|^2 \right] = 2 \cdot \text{Re}\left\{ (\hat{\phi}_N(t) - \phi_0(t)) \cdot i t \exp(-i t p_i) \right\} = \mathcal{O}(1)
+\end{equation}
+This restores the gradient norm to $\|\nabla_z \mathcal{L}\| \approx 0.1294$, matching the asymptotic $\chi^2$ distribution under $H_0$ and achieving perfect equilibrium with the JEPA prediction loss. The complete pre-training workflow for SigReg JEPA is formalized in Algorithm~\ref{alg:sigreg_jepa}.
+
+\begin{algorithm}[H]
+\caption{Self-Supervised Pre-Training of SigReg JEPA (LeJEPA)}
+\label{alg:sigreg_jepa}
+\begin{algorithmic}[1]
+\Require 4-channel MRI slice batch $X \in \mathbb{R}^{B \times 4 \times 240 \times 240}$, Encoder $E_\theta$, Predictor $P_\phi$, Projector $g_\psi$, Masking transform \texttt{JEPAMaskingTransform}, projection count $M=256$, regularizer weight $\lambda_{\text{SIGReg}} = 1.0$.
+\Ensure Updated parameter sets $\theta, \phi, \psi$.
+\State Mask image: $\{\mathcal{I}_{\text{ctx}}, \{\mathcal{I}_{\text{tgt}}^{(k)}\}_{k=1}^K\} \leftarrow \text{JEPAMaskingTransform}(X)$
+\State Forward online encoder on full image without gradients:
+\State \quad $Y_{\text{full}} \leftarrow E_\theta(X).\text{detach}() \in \mathbb{R}^{B \times 225 \times D}$ \Comment{Target representations}
+\State Forward online encoder on context patches:
+\State \quad $Z_{\text{ctx}} \leftarrow E_\theta(X, \text{patch\_indices}=\mathcal{I}_{\text{ctx}}) \in \mathbb{R}^{B \times N_{\text{ctx}} \times D}$
+\State Predict target representations:
+\State \quad $\hat{Y}_{\text{tgt}}^{(k)} \leftarrow P_\phi(Z_{\text{ctx}}, \mathcal{I}_{\text{ctx}}, \mathcal{I}_{\text{tgt}}^{(k)})$ for $k = 1, \dots, K$
+\State Compute prediction loss: $\mathcal{L}_{\text{pred}} \leftarrow \frac{1}{K} \sum_{k=1}^K \text{Smooth}_{L_1}\left(\hat{Y}_{\text{tgt}}^{(k)}, \, \text{LayerNorm}(Y_{\text{full}}[:, \mathcal{I}_{\text{tgt}}^{(k)}, :])\right)$
+\State Project context tokens: $Z_{\text{proj}} \leftarrow g_\psi(Z_{\text{ctx}}) \in \mathbb{R}^{(B \cdot N_{\text{ctx}}) \times d_p}$
+\State Sample $M$ random unit projection vectors $A \sim \mathcal{N}(0, \mathbf{I}_{d_p \times M})$, $A \leftarrow \text{Normalize}(A, \text{dim}=0)$
+\State 1D random projections: $P \leftarrow Z_{\text{proj}} A \in \mathbb{R}^{N \times M}$
+\State Compute Epps--Pulley test statistic: $\mathcal{L}_{\text{SIGReg}} \leftarrow \frac{1}{M} \sum_{m=1}^M \mathcal{T}_{\text{EP}}(P_{:, m})$
+\State Total loss: $\mathcal{L}_{\text{total}} \leftarrow \mathcal{L}_{\text{pred}} + \lambda_{\text{SIGReg}} \mathcal{L}_{\text{SIGReg}}$
+\State Backpropagate and update: $\theta, \phi, \psi \leftarrow \text{AdamW}(\nabla_{\theta, \phi, \psi} \mathcal{L}_{\text{total}})$
+\end{algorithmic}
+\end{algorithm}
 
 \subsection{VisReg JEPA: Projector MLP \& Standardized Sliced-Wasserstein Decoupling}
 
-VisReg JEPA \citep{wu2026visreg} similarly operates without an EMA teacher encoder. However, directly penalizing raw patch tokens with Sliced-Wasserstein Distance (SWD) couples scale (variance) with distribution shape (Gaussianity), creating severe dimensional rank collapse ($\text{Rank}_{\text{eff}} \approx 16.92$). Furthermore, regularizing the raw backbone representations forces them toward isotropic noise, impairing downstream spatial segmentation.
+VisReg JEPA \citep{wu2026visreg} similarly operates without an EMA teacher encoder. It enforces representation non-collapse by decoupling scale regularization from distribution shape regularization via Optimal Transport \citep{bonneel2015sliced}.
 
 \paragraph{Dedicated Projector MLP}
 To isolate non-collapse regularization from downstream feature representations, VisReg JEPA routes context tokens through a 2-layer Projector MLP $g_\psi$:
@@ -226,7 +305,7 @@ To strictly isolate the \emph{shape} of the distribution from variance and mean 
 \begin{equation}
     \tilde{p}_{im} = \frac{p_{im} - \mu_m}{\sigma_m + \epsilon}, \qquad \mu_m = \frac{1}{K} \sum_{i=1}^K p_{im}, \quad \sigma_m = \sqrt{\frac{1}{K} \sum_{i=1}^K (p_{im} - \mu_m)^2 + \epsilon}
 \end{equation}
-Sorting the standardized projections $\tilde{p}_{(\cdot) m}$ yields empirical quantiles. The Sliced-Wasserstein Distance against standard normal $\mathcal{N}(0, 1)$ quantiles is computed as:
+Sorting the standardized projections $\tilde{p}_{(\cdot) m}$ yields empirical quantiles. The Sliced-Wasserstein Distance against standard normal $\mathcal{N}(0, 1)$ quantiles has an exact closed-form solution:
 \begin{equation}
     \mathcal{L}_{\text{SWD}}(Z_{\text{proj}}) = \frac{1}{M} \sum_{m=1}^M \frac{1}{K} \sum_{i=1}^K \left| \tilde{p}_{(i) m} - \Phi^{-1}\left(\frac{i - 0.5}{K}\right) \right|
 \end{equation}
@@ -234,7 +313,11 @@ where the target analytical quantiles are evaluated using the inverse error func
 \begin{equation}
     \Phi^{-1}\left(\frac{i - 0.5}{K}\right) = \sqrt{2} \cdot \text{erf}^{-1}\left(2 \left(\frac{i - 0.5}{K}\right) - 1.0\right)
 \end{equation}
-This standardization eliminates scale-shape coupling: if features have high variance ($\sigma = 2.0$), the standardized SWD evaluates to near zero ($\mathcal{W}_1 < 0.03$), preventing the artificial low-rank penalty. The total VisReg loss is:
+
+\paragraph{Theoretical Explanation of Effective Rank Behavior (Table~\ref{tab:benchmark_results_ext})}
+A striking empirical phenomenon in Table~\ref{tab:benchmark_results_ext} is that VisReg JEPA exhibits an Effective Rank of only $\textbf{16.92}$, whereas SigReg JEPA achieves $\textbf{366.91}$, yet VisReg achieves competitive downstream segmentation ($0.8358$ vs $0.8530$ Dice).
+
+This divergence is directly explained by the mathematics of projection standardization: because $\tilde{p}_{im} = (p_{im} - \mu_m) / \sigma_m$ normalizes variance to $1.0$ along every sampled hypersphere slice, \textbf{SWD is scale-invariant along all projection rays}. Consequently, if the latent representation compresses onto an oblique low-dimensional subspace (where variance along an off-axis direction approaches zero), SWD cannot detect this collapse because its standardization artificially inflates the compressed slice variance back to $1.0$. Meanwhile, $\mathcal{L}_{\text{var}}$ only penalizes variance collapse along \emph{axis-aligned} coordinates ($j = 1, \dots, d_p$). Hence, representations can collapse onto lower-dimensional hyperplanes without incurring penalties from either loss term. SigReg avoids this pitfall because the Epps--Pulley test statistic tests unstandardized characteristic functions, penalizing any scale deviation. Total VisReg loss is:
 \begin{equation}
     \mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{var}} \mathcal{L}_{\text{var}}(Z_{\text{proj}}) + \lambda_{\text{swd}} \mathcal{L}_{\text{SWD}}(Z_{\text{proj}})
 \end{equation}
@@ -262,11 +345,13 @@ The ResUNet baseline consists of a 5-stage symmetric encoder-decoder spanning sp
 The nnU-Net baseline implements the self-configuring DynUNet architecture \citep{isensee2021nnunet} with residual blocks (\texttt{res\_block=True}) and intermediate supervision heads:
 \begin{itemize}
     \item \textbf{Multi-Scale Concatenation Skips}: Like ResUNet, feature maps from each encoder level are concatenated across horizontal skip connections into the upsampling decoder blocks.
-    \item \textbf{Deep Supervision Auxiliary Heads}: In addition to the final full-resolution output at $240 \times 240$, auxiliary segmentation projection heads are attached to intermediate decoder stages at resolutions $120 \times 120$, $60 \times 60$, and $30 \times 30$. During training, ground-truth masks $Y$ are downsampled to matching resolutions using nearest-neighbor interpolation: $Y_s = \text{Downsample}(Y, 2^{s-1})$. The multi-scale loss is computed as:
+    \item \textbf{Normalized Deep Supervision Weighting}: In addition to the final full-resolution output at $240 \times 240$, auxiliary segmentation projection heads are attached to intermediate decoder stages at resolutions $120 \times 120$, $60 \times 60$, and $30 \times 30$. During training, ground-truth masks $Y$ are downsampled to matching resolutions using nearest-neighbor interpolation: $Y_s = \text{Downsample}(Y, 2^{s-1})$ to preserve strict binary discrete labels without interpolation blur.
+    
+    The multi-scale loss is computed using normalized exponential decay weights:
     \begin{equation}
-        \mathcal{L}_{\text{deep\_sup}} = \sum_{s=1}^S w_s \cdot \left[ \mathcal{L}_{\text{Dice}}(\hat{Y}_s, Y_s) + \mathcal{L}_{\text{BCE}}(\hat{Y}_s, Y_s) \right], \qquad w_s = \frac{1}{2^{s-1}}
+        \mathcal{L}_{\text{deep\_sup}} = \sum_{s=1}^S w_s \cdot \left[ \mathcal{L}_{\text{Dice}}(\hat{Y}_s, Y_s) + \mathcal{L}_{\text{BCE}}(\hat{Y}_s, Y_s) \right], \qquad w_s = \frac{2^{-(s-1)}}{\sum_{j=1}^S 2^{-(j-1)}}
     \end{equation}
-    with normalized weights $w_1 = 1.0, w_2 = 0.5, w_3 = 0.25, w_4 = 0.125$. At inference time, only the full-resolution prediction $\hat{Y}_1$ is retained.
+    For $S = 4$ stages, the raw weights $(1.0, 0.5, 0.25, 0.125)$ sum to $1.875$, yielding normalized weights $(0.533, 0.267, 0.133, 0.067)$. Normalizing weights ensures that the effective gradient scale remains identical to single-resolution training, preventing learning rate instability. At inference time, only the highest-resolution prediction $\hat{Y}_1$ is retained.
 \end{itemize}
 
 \paragraph{ViT Segmentation Decoder: Pure Bottleneck vs. Skip Connections}
@@ -280,13 +365,19 @@ The patch token grid $\mathbf{Z} \in \mathbb{R}^{B \times 225 \times 384}$ is re
     \mathbf{X}_4 &= \text{GELU}\left(\text{GroupNorm}_{4}\left(\text{ConvTranspose2d}_{48 \to 24, k=2, s=2}(\mathbf{X}_3)\right)\right) & (240 \times 240) \\
     \hat{Y} &= \text{Conv2d}_{24 \to 1, k=1}(\mathbf{X}_4) & (240 \times 240)
 \end{align}
-This architectural divergence serves a deliberate scientific purpose: because the decoder has no skip connections, the segmentation output depends \emph{entirely} on the abstract semantic information encoded in the bottleneck tokens.
+
+\paragraph{Group Normalization \& Controlled Decoder Capacity}
+We employ Group Normalization \citep{wu2018group} instead of Batch Normalization. In downstream medical MRI fine-tuning with small mini-batches ($B \le 8$), Batch Normalization exhibits noisy running mean and variance estimates that destabilize convergence. GroupNorm partitions channels into independent groups (e.g., $16, 8, 4$), computing statistics per-sample and per-group, guaranteeing batch-independent stability. Furthermore, the decoder is deliberately lightweight ($\approx 0.6\,\text{M}$ parameters), ensuring downstream segmentation performance directly reflects the semantic density of pre-trained encoder representations rather than decoder capacity.
+
+\paragraph{Decoder Probing Protocol}
+In linear/decoder probing experiments, the pre-trained Vision Transformer backbone is frozen ($\nabla_\theta \mathcal{L} = 0$), and only the lightweight decoder parameters are trained. During probing, the encoder is locked into evaluation mode ($E_\theta.\text{eval}()$), deactivating dropout and freezing LayerNorm statistics, isolating the intrinsic linear/non-linear separability of frozen self-supervised representations.
 
 \subsection{Downstream Segmentation Loss and Evaluation Metrics}
 
 Let $\hat{Y} \in \mathbb{R}^{H \times W}$ denote continuous segmentation logits, $P = \mathbb{I}(\sigma(\hat{Y}) > 0.5) \in \{0, 1\}^{H \times W}$ denote the thresholded binary segmentation mask, and $Y \in \{0, 1\}^{H \times W}$ denote ground-truth tumor annotations.
 
-The segmentation loss combines Soft Dice Loss (with squared denominator terms for stable gradients) and Binary Cross-Entropy (BCE) Loss:
+\paragraph{Combined Dice + BCE Objective}
+In 2D brain MRI slices, tumor lesions occupy on average $< 2\%$ of spatial pixels, and $46.3\%$ of slices contain zero tumor voxels (non-tumor brain tissue). Standard Binary Cross-Entropy (BCE) is dominated by true background pixels, driving models toward degenerate all-zero predictions. We optimize a combined Soft Dice + BCE loss \citep{milletari2016vnet,isensee2021nnunet}:
 \begin{equation}
     \mathcal{L}_{\text{Dice}}(\hat{Y}, Y) = 1.0 - \frac{2 \sum_{i} \sigma(\hat{Y}_i) Y_i + \epsilon}{\sum_{i} \sigma(\hat{Y}_i)^2 + \sum_{i} Y_i^2 + \epsilon}
 \end{equation}
@@ -296,11 +387,20 @@ The segmentation loss combines Soft Dice Loss (with squared denominator terms fo
 \begin{equation}
     \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{Dice}}(\hat{Y}, Y) + \mathcal{L}_{\text{BCE}}(\hat{Y}, Y)
 \end{equation}
+Soft Dice directly maximizes volumetric overlap, while BCE provides smooth, convex pixel-level gradients that accelerate convergence and calibrate class probabilities.
+
+\paragraph{Macro-Averaging Protocol in BraTS Benchmarks}
+Following the official BraTS evaluation rules \citep{brats2024}, all metrics are computed using \textbf{macro-averaging}: metrics are evaluated per individual 2D slice $b \in \{1, \dots, N_{\text{test}}\}$ and subsequently averaged across the patient test population:
+\begin{equation}
+    \text{Metric}_{\text{macro}} = \frac{1}{N_{\text{test}}} \sum_{b=1}^{N_{\text{test}}} \text{Metric}(P_b, Y_b)
+\end{equation}
+Micro-averaging (pooling TP, FP, FN across the dataset) would allow massive late-stage tumors ($> 10\%$ slice area) to statistically overwhelm small early-stage or satellite lesions ($< 0.5\%$ area). Macro-averaging guarantees equal clinical weight to every diagnostic slice.
 
 \paragraph{Dice Similarity Coefficient (DSC / Test Dice)}
 \begin{equation}
     \text{Dice}(P, Y) = \frac{2 \sum_{i=1}^{N_{\text{vox}}} P_i Y_i + \epsilon}{\sum_{i=1}^{N_{\text{vox}}} P_i + \sum_{i=1}^{N_{\text{vox}}} Y_i + \epsilon} = \frac{2 \cdot |\text{TP}|}{2 \cdot |\text{TP}| + |\text{FP}| + |\text{FN}| + \epsilon}
 \end{equation}
+where $\epsilon = 10^{-5}$. On non-tumor slices where both $P$ and $Y$ are completely empty ($|\text{TP}| = |\text{FP}| = |\text{FN}| = 0$), $\text{Dice}(P, Y) = \frac{\epsilon}{\epsilon} = 1.0$, correctly rewarding true-negative slice classification.
 
 \paragraph{Intersection over Union (IoU / Jaccard Index)}
 \begin{equation}
@@ -308,30 +408,47 @@ The segmentation loss combines Soft Dice Loss (with squared denominator terms fo
 \end{equation}
 
 \paragraph{95th Percentile Hausdorff Distance ($\text{HD95}$ in pixels)}
-Let $\partial P = \{p_1, \dots, p_u\}$ and $\partial Y = \{y_1, \dots, y_v\}$ be boundary surface point sets extracted via morphological erosion. The distance from point $p \in \partial P$ to $\partial Y$ is $d(p, \partial Y) = \min_{y \in \partial Y} \|p - y\|_2$. The symmetric HD95 distance is:
+Let $\partial P$ and $\partial Y$ denote the morphological boundary contour point sets extracted via binary erosion with a $3 \times 3$ flat structuring element $\mathbf{K}$:
+\begin{equation}
+    \partial P = \text{argwhere}(P \oplus \mathbf{K} \setminus P), \qquad \partial Y = \text{argwhere}(Y \oplus \mathbf{K} \setminus Y)
+\end{equation}
+Directed Euclidean distance vectors are computed between surface points:
+\begin{equation}
+    d(p, \partial Y) = \min_{y \in \partial Y} \|p - y\|_2, \qquad d(y, \partial P) = \min_{p \in \partial P} \|y - p\|_2
+\end{equation}
+The symmetric 95th percentile Hausdorff Distance is:
 \begin{equation}
     \text{HD95}(P, Y) = \max\left( \mathcal{P}_{95\%}\left( \{d(p, \partial Y)\}_{p \in \partial P} \right), \, \mathcal{P}_{95\%}\left( \{d(y, \partial P)\}_{y \in \partial Y} \right) \right)
 \end{equation}
-When either $\partial P$ or $\partial Y$ is completely empty, $\text{HD95}$ defaults to the diagonal boundary bound $\sqrt{240^2 + 240^2} \approx 339.41\,\text{px}$.
+When both $P$ and $Y$ are empty, $\text{HD95} = 0.0\,\text{px}$. When one mask is non-empty and the other is empty (complete false positive or false negative miss), $\text{HD95}$ receives the maximal spatial penalty: the diagonal distance $\sqrt{240^2 + 240^2} \approx 339.41\,\text{px}$.
+
+\paragraph{Unbiased Batch Concatenation Protocol}
+In our evaluation pipeline, evaluation batches emit per-sample metric vectors ($\text{dice\_per\_sample}$, etc.) that are concatenated across all batches. This eliminates batch-size weighting bias when the final batch has fewer samples ($N_{\text{test}} = 1810 \equiv 2 \pmod 8$), preventing the final two samples from carrying four times the weight of earlier samples.
 
 \subsection{Representation Probing Metrics (Effective Rank \& Cosine Similarity)}
 
-\paragraph{Effective Feature Rank ($\text{Rank}_{\text{eff}}$)}
-Let $\bar{Z} = Z - \frac{1}{M} \mathbf{1} \mathbf{1}^T Z$ be the mean-centered token feature matrix ($Z \in \mathbb{R}^{M \times D}$). Computing SVD $\bar{Z} = U \mathbf{S} V^T$ yields singular values $\mathbf{S} = \text{diag}(s_1, \dots, s_D)$ and covariance eigenvalues $\lambda_i = s_i^2$. Normalizing eigenvalues produces a probability distribution:
+\paragraph{Effective Feature Rank ($\text{Rank}_{\text{eff}}$ via Squared Singular Values)}
+Following \citet{roy2007effective}, Effective Feature Rank evaluates the spectral entropy of the empirical sample covariance matrix $\Sigma = \frac{1}{M - 1} \bar{Z}^T \bar{Z}$, where $\bar{Z} = Z - \frac{1}{M} \mathbf{1} \mathbf{1}^T Z \in \mathbb{R}^{M \times D}$ denotes mean-centered token features.
+
+Computing the Singular Value Decomposition (SVD) $\bar{Z} = U \mathbf{S} V^T$ yields singular values $\mathbf{S} = \text{diag}(s_1, \dots, s_D)$. The covariance eigenvalues are proportional to the squared singular values:
+\begin{equation}
+    \lambda_i = \frac{s_i^2}{M - 1} \propto s_i^2
+\end{equation}
+Normalizing eigenvalues yields a valid discrete probability distribution over the principal axes:
 \begin{equation}
     p_i = \frac{s_i^2}{\sum_{j=1}^D s_j^2}, \qquad \sum_{i=1}^D p_i = 1.0
 \end{equation}
-Effective Feature Rank is the exponential of the Shannon entropy:
+Effective Feature Rank is the exponential of the spectral Shannon entropy:
 \begin{equation}
-    \text{Rank}_{\text{eff}}(Z) = \exp\left( - \sum_{i=1}^D p_i \ln(p_i) \right)
+    \text{Rank}_{\text{eff}}(Z) = \exp\left( - \sum_{i=1}^D p_i \ln(p_i + 10^{-12}) \right)
 \end{equation}
-$\text{Rank}_{\text{eff}} \in [1, D]$. A value near $D = 384$ indicates maximal representation diversity; a value near $1.0$ indicates complete dimensional collapse.
+\textbf{Theoretical Rationale for $s_i^2$ over $s_i$}: Using linear singular values $s_i$ (which scale as $\sqrt{\lambda_i}$) artificially compresses dynamic range and flattens the distribution toward uniformity, severely overestimating representation rank and masking dimensional collapse. Using squared singular values $s_i^2$ strictly measures the true spectral entropy of the covariance matrix.
 
 \paragraph{Average Pairwise Cosine Similarity ($S_{\text{cosine}}$)}
 \begin{equation}
     S_{\text{cosine}}(Z) = \frac{1}{M(M - 1)} \sum_{m=1}^M \sum_{n \neq m}^M \frac{Z_{m, :} \cdot Z_{n, :}}{\|Z_{m, :}\|_2 \|Z_{n, :}\|_2}
 \end{equation}
-$S_{\text{cosine}} \to 0.0$ reflects orthogonal, linearly independent patch tokens; $S_{\text{cosine}} \to 1.0$ indicates spatial representation collapse.
+$S_{\text{cosine}} \to 0.0$ reflects orthogonal, linearly independent patch tokens on the unit hypersphere; $S_{\text{cosine}} \to 1.0$ indicates spatial representation collapse onto a 1D ray. To bound computational complexity, a random subset of $M = 1,000$ tokens is sampled during probing.
 
 
 \section{Training and Optimization Protocols}
@@ -345,7 +462,7 @@ Experiments are conducted on the official 2D preprocessed BraTS Glioma dataset (
 \begin{itemize}
     \item Optimizer: AdamW ($\beta_1 = 0.9, \beta_2 = 0.999$, weight decay $10^{-4}$).
     \item Learning rate schedule: Base $\text{lr} = 10^{-4}$ decayed via Cosine Annealing to $\eta_{\text{min}} = 10^{-6}$.
-    \item Gradient clipping: \texttt{torch.nn.utils.clip\_grad\_norm\_(model.parameters(), max\_norm=1.0)} applied at every iteration.
+    \item Gradient clipping: Global gradient norm is clipped at $\tau = 1.0$ at every iteration to ensure numerical stability.
     \item Batch size: $8$ slices per batch (effectively $8 \times 96 = 768$ context tokens per step).
 \end{itemize}
 

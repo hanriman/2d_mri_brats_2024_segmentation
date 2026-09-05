@@ -36,7 +36,12 @@ class EppsPulleyGaussianityTest(nn.Module):
         ecf_real = x_t.cos().mean(dim=0)   # [K, Q]
         ecf_imag = x_t.sin().mean(dim=0)   # [K, Q]
         err = (ecf_real - phi).square() + ecf_imag.square()  # [K, Q]
-        statistic = (err @ weights) * proj.size(0)  # [K]
+        # NOTE: The original EP test statistic multiplies by N (sample count) for
+        # convergence to chi-squared under H0. However, as a training loss, the
+        # JEPA prediction loss is mean-reduced (O(1) gradients), so multiplying by N
+        # would make the SigReg gradient scale linearly with batch × patches,
+        # destabilizing the loss balance across batch sizes.
+        statistic = err @ weights  # [K]
         return statistic.mean()
 
 

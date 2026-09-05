@@ -67,8 +67,13 @@ class SigRegJEPA(nn.Module):
         B = images.shape[0]
         
         # 1. Forward encoder on full image without gradients to extract target representations.
+        # Switch to eval mode to disable dropout/stochastic layers in targets, then restore.
+        was_training = self.context_encoder.training
+        self.context_encoder.eval()
         with torch.no_grad():
             full_tokens = self.context_encoder(images)  # [B, N_patches, D]
+        if was_training:
+            self.context_encoder.train()
         
         # 2. Forward encoder on ONLY context patches WITH gradients (no attention leakage)
         context_tokens = self.context_encoder(images, patch_indices=context_indices)
@@ -83,7 +88,9 @@ class SigRegJEPA(nn.Module):
             if target_indices.dim() == 1:
                 target_repr = full_tokens[:, target_indices, :].detach()
             else:
-                target_repr = torch.stack([full_tokens[b, target_indices[b], :] for b in range(B)], dim=0).detach()
+                target_repr = full_tokens.gather(
+                    1, target_indices.unsqueeze(-1).expand(-1, -1, full_tokens.size(-1))
+                ).detach()
                 
             pred_repr = self.predictor(context_tokens, context_indices, target_indices)
             predictions.append(pred_repr)

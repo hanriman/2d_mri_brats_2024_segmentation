@@ -79,8 +79,13 @@ def test_ijepa_empty_fallback():
     loss_fn = IJEPALoss()
     tgt = torch.randn(2, 10, 128, requires_grad=True)
     loss = loss_fn([], [tgt])
+    assert loss.item() == 0.0
+    # The returned loss should be disconnected from the target computation graph.
+    # Targets come from the EMA teacher and must NEVER receive meaningful gradients.
+    # Verify the loss doesn't depend on target values.
     loss.backward()
-    assert tgt.grad is not None
+    if tgt.grad is not None:
+        assert torch.all(tgt.grad == 0), "Targets should not receive non-zero gradients from the empty fallback"
 
 def test_sigreg_device_transfer():
     preds = [torch.randn(2, 20, 128, requires_grad=True)]

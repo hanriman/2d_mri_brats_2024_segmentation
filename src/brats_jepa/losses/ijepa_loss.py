@@ -21,9 +21,10 @@ class IJEPALoss(nn.Module):
         targets: list[torch.Tensor],
     ) -> torch.Tensor:
         if len(predictions) == 0:
-            if targets:
-                return 0.0 * sum(t.sum() for t in targets)
-            return torch.tensor(0.0, requires_grad=True)
+            # Return a zero loss disconnected from targets. Targets come from
+            # the EMA teacher and must never receive gradients.
+            device = targets[0].device if targets else torch.device("cpu")
+            return torch.tensor(0.0, device=device, requires_grad=True)
         
         loss = torch.tensor(0.0, device=predictions[0].device)
         for pred, tgt in zip(predictions, targets):

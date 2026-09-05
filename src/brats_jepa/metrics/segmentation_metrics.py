@@ -97,4 +97,11 @@ def compute_segmentation_metrics(pred: torch.Tensor, target: torch.Tensor, thres
         "precision": float(np.mean(precision_vals)),
         "recall": float(np.mean(recall_vals)),
         "hd95": float(np.mean(hd95_vals)),
+        # Per-sample lists for proper global aggregation across batches
+        # (avoids bias from averaging batch-means when last batch is smaller)
+        "dice_per_sample": dice_vals,
+        "iou_per_sample": iou_vals,
+        "precision_per_sample": precision_vals,
+        "recall_per_sample": recall_vals,
+        "hd95_per_sample": hd95_vals,
     }

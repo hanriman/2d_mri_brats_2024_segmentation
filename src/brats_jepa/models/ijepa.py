@@ -85,7 +85,9 @@ class IJEPA(nn.Module):
             if target_indices.dim() == 1:
                 target_repr = full_target_tokens[:, target_indices, :]
             else:
-                target_repr = torch.stack([full_target_tokens[b, target_indices[b], :] for b in range(B)], dim=0)
+                target_repr = full_target_tokens.gather(
+                    1, target_indices.unsqueeze(-1).expand(-1, -1, full_target_tokens.size(-1))
+                )
                 
             # Predict target representations from context tokens
             pred_repr = self.predictor(context_tokens, context_indices, target_indices)

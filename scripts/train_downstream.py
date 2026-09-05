@@ -2,6 +2,8 @@ import argparse
 import time
 from pathlib import Path
 
+import numpy as np
+
 import torch
 from torch.utils.data import DataLoader
 
@@ -167,8 +169,8 @@ def main():
 
         model.eval()
         val_loss = 0.0
-        val_dice = 0.0
-        val_hd95 = 0.0
+        all_dice = []
+        all_hd95 = []
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(val_loader):
@@ -183,13 +185,13 @@ def main():
 
                 val_loss += loss.item()
                 metrics = compute_segmentation_metrics(logits, labels)
-                val_dice += metrics["dice"]
-                val_hd95 += metrics["hd95"]
+                all_dice.extend(metrics["dice_per_sample"])
+                all_hd95.extend(metrics["hd95_per_sample"])
 
         n_val_batches = min(len(val_loader), args.max_batches) if args.max_batches else len(val_loader)
         avg_val_loss = val_loss / max(1, n_val_batches)
-        avg_val_dice = val_dice / max(1, n_val_batches)
-        avg_val_hd95 = val_hd95 / max(1, n_val_batches)
+        avg_val_dice = float(np.mean(all_dice)) if all_dice else 0.0
+        avg_val_hd95 = float(np.mean(all_hd95)) if all_hd95 else 0.0
         epoch_duration = time.perf_counter() - epoch_start
 
         logger.info(f"Epoch [{epoch:02d}/{args.epochs:02d}] | Train Loss: {avg_train_loss:.5f} | Val Loss: {avg_val_loss:.5f} | Val Dice: {avg_val_dice:.4f} | Val HD95: {avg_val_hd95:.2f}px | Duration: {epoch_duration:.2f}s")

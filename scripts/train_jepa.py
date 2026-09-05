@@ -174,8 +174,9 @@ def main():
                 optimizer.step()
 
             if args.model_type == "ijepa":
-                total_steps = args.epochs * len(train_loader)
-                current_step = (epoch - 1) * len(train_loader) + batch_idx
+                steps_per_epoch = min(len(train_loader), args.max_batches) if args.max_batches else len(train_loader)
+                total_steps = args.epochs * steps_per_epoch
+                current_step = (epoch - 1) * steps_per_epoch + batch_idx
                 momentum = 1.0 - (1.0 - 0.996) * 0.5 * (1.0 + math.cos(math.pi * current_step / max(1, total_steps)))
                 model.update_target_encoder(momentum=momentum)
             else:
@@ -241,6 +242,8 @@ def main():
 
     # In self-supervised learning (I-JEPA, LeJEPA, VISReg), the final epoch representations
     # after full cosine annealing are fully structured and mature for downstream tasks.
+    # This is the intended checkpoint for downstream fine-tuning (not min_loss, which
+    # captures early-training representations that may exhibit variance collapse).
     final_ckpt = ckpt_dir / f"final_{args.model_type}.pt"
     best_ckpt = ckpt_dir / f"best_{args.model_type}.pt"
     final_payload = {
@@ -249,6 +252,7 @@ def main():
         "context_encoder_state_dict": model.context_encoder.state_dict(),
         "train_loss": avg_train_loss,
         "val_loss": avg_val_loss,
+        "checkpoint_type": "final_epoch",  # Explicit: this is the last epoch, not best val loss
     }
     torch.save(final_payload, final_ckpt)
     torch.save(final_payload, best_ckpt)

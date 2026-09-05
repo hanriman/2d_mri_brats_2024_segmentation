@@ -3,7 +3,24 @@ from torch import nn
 
 
 class PatchEmbed2D(nn.Module):
-    """2D Image to Patch Embedding."""
+    r"""
+    2D Multi-Modal MRI Patch Embedding Layer.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Patch Linear Projection:
+       Splits a 4-channel 2D MRI slice x \in \mathbb{R}^{B \times 4 \times 240 \times 240}
+       into a grid of non-overlapping patches of size P \times P (16 \times 16).
+       Implemented as a 2D convolution with kernel_size = stride = P = 16:
+           \text{grid\_size} = \left(\frac{240}{16}, \frac{240}{16}\right) = (15, 15) \implies N = 225 \text{ patches}.
+       Linearly projects each 4 \times 16 \times 16 = 1024-dimensional raw voxel patch
+       to the latent embedding dimension D = 384.
+
+    References:
+    -----------
+    - Dosovitskiy, A., et al. (2020). "An Image is Worth 16x16 Words: Transformers for Image
+      Recognition at Scale." ICLR 2021.
+    """
     def __init__(self, img_size: int = 240, patch_size: int = 16, in_channels: int = 4, embed_dim: int = 384):
         super().__init__()
         self.img_size = img_size
@@ -19,7 +36,31 @@ class PatchEmbed2D(nn.Module):
         return x
 
 class VisionTransformerEncoder2D(nn.Module):
-    """Vision Transformer Encoder for 2D multi-modal images and JEPA context patches."""
+    r"""
+    Vision Transformer Encoder for 2D Multi-Modal MRI Representations.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Pre-LayerNorm Transformer Architecture:
+       Uses pre-LN Transformer layers (`norm_first=True`) with GELU activations.
+       Pre-LN guarantees identity gradient paths across residual connections, eliminating
+       the warm-up sensitivity and gradient dissipation typical of Post-LN ViTs (Xiong et al., 2020).
+
+    2. Context Patch Selection (Attention Leakage Prevention):
+       When patch_indices are provided, ONLY context patches are fed into self-attention blocks.
+       This design choice has two major scientific justifications:
+       a) **Zero Information Leakage**: Prevents attention keys/queries from attending to target
+          patches, ensuring strict self-supervised prediction difficulty.
+       b) **Quadratic Speedup**: Self-attention complexity scales as O(N_{ctx}^2) rather than
+          O(N_{patches}^2). With N_{ctx} = 96 vs N = 225, attention FLOPs are reduced by ~82%.
+
+    References:
+    -----------
+    - Dosovitskiy, A., et al. (2020). "An Image is Worth 16x16 Words." ICLR 2021.
+    - Assran, M., et al. (2023). "Self-Supervised Learning from Images with a Joint-Embedding
+      Predictive Architecture." IEEE/CVF CVPR 2023.
+    - Xiong, R., et al. (2020). "On Layer Normalization in the Transformer Architecture." ICML 2020.
+    """
     def __init__(
         self,
         img_size: int = 240,
@@ -71,7 +112,35 @@ class VisionTransformerEncoder2D(nn.Module):
         return out
 
 class JEPAPredictor(nn.Module):
-    """Predicts target patch representations from context tokens and target mask position tokens."""
+    r"""
+    JEPA Latent Space Target Representation Predictor.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Capacity Asymmetry (Encoder vs Predictor):
+       - Encoder: D = 384, depth = 8, 6 attention heads.
+       - Predictor: D_{pred} = 192, depth = 4, 6 attention heads.
+       In predictive self-supervised learning, if the predictor is given comparable or
+       greater parameter capacity than the encoder, the system is susceptible to "representation
+       offloading", where the encoder learns trivial identity features and the predictor does the
+       heavy semantic reconstruction. Narrowing the predictor (D_{pred} = D / 2) and restricting
+       its depth forces the encoder to maximize the semantic density and spatial linearly-separable
+       structure of its representations.
+
+    2. Target Spatial Querying via Positional Embeddings:
+       The target tokens are formed by broadcasting a learned `mask_token` and adding the
+       positional embeddings corresponding to target patch coordinates:
+           t_{\text{query}}^{(j)} = m_{\text{token}} + p_{\text{pos}}[j] \quad \text{for } j \in \text{target\_indices}
+       Context tokens (projected to D_{pred} + context position embeddings) and target queries
+       are concatenated into full self-attention blocks. The target output slots predict
+       the teacher's latent representation s_y at each queried patch coordinate.
+
+    References:
+    -----------
+    - Assran, M., et al. (2023). "Self-Supervised Learning from Images with a Joint-Embedding
+      Predictive Architecture." IEEE/CVF CVPR 2023.
+    - He, K., et al. (2022). "Masked Autoencoders Are Scalable Vision Learners." CVPR 2022.
+    """
     def __init__(
         self,
         embed_dim: int = 384,

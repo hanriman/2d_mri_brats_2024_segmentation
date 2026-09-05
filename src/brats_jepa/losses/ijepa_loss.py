@@ -5,11 +5,32 @@ from torch import nn
 
 
 class IJEPALoss(nn.Module):
-    """
-    Computes prediction loss between predicted target representations
-    and target encoder representations across target blocks.
-    Following official I-JEPA (Assran et al., CVPR 2023), ONLY targets are LayerNormed;
-    predictions are unnormalized to preserve scale/magnitude gradient flow.
+    r"""
+    I-JEPA Latent Representation Prediction Loss.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Asymmetric Target Normalization:
+       Following official I-JEPA (Assran et al., CVPR 2023, Section 3.2):
+           \mathcal{L}_y = \frac{1}{M} \sum_{i=1}^M \mathcal{D}(\hat{s}_y^{(i)}, \text{LayerNorm}(s_y^{(i)}))
+       Only the teacher target representations s_y are LayerNormed. The predictor outputs
+       \hat{s}_y are deliberately UNNORMALIZED. If predictions were normalized, the predictor
+       could alter its output magnitude arbitrarily without gradient penalty, destabilizing
+       the latent coordinate scale. Normalizing targets establishes a standardized, zero-mean,
+       unit-variance coordinate target for the online network.
+
+    2. Smooth L1 (Huber) Robustness in Medical MRI:
+       Standard MSE loss quadratic penalties (\frac{1}{2} e^2) disproportionately amplify
+       large outliers. In 2D multi-modal brain MRI, hyperintense necrotic cores, contrast-enhancing
+       margins, or skull-stripping boundary artifacts produce heavy-tailed representation errors
+       in early epochs. Smooth L1 transitions to linear penalties (|e| - 0.5) for |e| \ge 1,
+       suppressing gradient shocks and providing stable convergence across heterogeneous scans.
+
+    References:
+    -----------
+    - Assran, M., Duval, Q., Misra, I., Bojanowski, P., Vincent, P., Rabbat, M., LeCun, Y., &
+      Ballas, N. (2023). "Self-Supervised Learning from Images with a Joint-Embedding
+      Predictive Architecture." IEEE/CVF CVPR 2023, pp. 15619-15629.
     """
     def __init__(self, loss_type: str = "smooth_l1"):
         super().__init__()

@@ -29,7 +29,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=30, help="Training epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument("--p_drop", type=float, default=0.0, help="Random modality dropout probability during training")
+    parser.add_argument("--p_drop", type=float, default=0.25, help="Random modality dropout probability during training")
     parser.add_argument("--freeze_encoder", action="store_true", help="Freeze ViT encoder weights for linear/decoder probing")
     parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv manifest file")
     parser.add_argument("--output_dir", type=str, default=None, help="Custom output directory for checkpoints and logs")

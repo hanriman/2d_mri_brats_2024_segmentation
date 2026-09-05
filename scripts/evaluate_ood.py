@@ -124,9 +124,9 @@ def main():
                     perturbed_images = transform_fn(images)
                     logits = model(perturbed_images)
                     m = compute_segmentation_metrics(logits, labels)
-                    d_list.append(m["dice"])
-                    i_list.append(m["iou"])
-                    h_list.append(m["hd95"])
+                    d_list.extend(m["dice_per_sample"])
+                    i_list.extend(m["iou_per_sample"])
+                    h_list.extend(m["hd95_per_sample"])
                     
             results.append({
                 "domain_shift": shift_name,

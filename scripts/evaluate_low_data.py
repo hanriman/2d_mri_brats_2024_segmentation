@@ -149,7 +149,7 @@ def main():
                 opt_u.zero_grad()
                 imgs = mod_drop(b["image"].to(device, non_blocking=True))
                 targets = b["label"].to(device, non_blocking=True)
-                with torch.amp.autocast('cuda', enabled=use_amp):
+                with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                     preds = unet(imgs)
                     l = loss_fn_bce(preds, targets)
                 if use_amp:
@@ -169,12 +169,12 @@ def main():
         d_list, i_list, h_list = [], [], []
         with torch.no_grad():
             for b in test_loader:
-                with torch.amp.autocast('cuda', enabled=use_amp):
+                with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                     preds = unet(b["image"].to(device, non_blocking=True))
                 m = compute_segmentation_metrics(preds, b["label"].to(device, non_blocking=True))
-                d_list.append(m["dice"])
-                i_list.append(m["iou"])
-                h_list.append(m["hd95"])
+                d_list.extend(m["dice_per_sample"])
+                i_list.extend(m["iou_per_sample"])
+                h_list.extend(m["hd95_per_sample"])
         
         unet_ckpt = ckpt_dir / f"unet_{frac_tag}.pt"
         torch.save({"model_state_dict": unet.state_dict(), "test_dice": float(np.mean(d_list))}, unet_ckpt)
@@ -205,7 +205,7 @@ def main():
                 opt_nn.zero_grad()
                 imgs = mod_drop(b["image"].to(device, non_blocking=True))
                 targets = b["label"].to(device, non_blocking=True)
-                with torch.amp.autocast('cuda', enabled=use_amp):
+                with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                     preds = nnunet(imgs)
                     l = loss_fn_ds(preds, targets)
                 if use_amp:
@@ -225,12 +225,12 @@ def main():
         d_list, i_list, h_list = [], [], []
         with torch.no_grad():
             for b in test_loader:
-                with torch.amp.autocast('cuda', enabled=use_amp):
+                with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                     preds = nnunet(b["image"].to(device, non_blocking=True))
                 m = compute_segmentation_metrics(preds, b["label"].to(device, non_blocking=True))
-                d_list.append(m["dice"])
-                i_list.append(m["iou"])
-                h_list.append(m["hd95"])
+                d_list.extend(m["dice_per_sample"])
+                i_list.extend(m["iou_per_sample"])
+                h_list.extend(m["hd95_per_sample"])
                 
         nnunet_ckpt = ckpt_dir / f"nnunet_{frac_tag}.pt"
         torch.save({"model_state_dict": nnunet.state_dict(), "test_dice": float(np.mean(d_list))}, nnunet_ckpt)
@@ -278,7 +278,7 @@ def main():
                     opt_j.zero_grad()
                     imgs = mod_drop(b["image"].to(device, non_blocking=True))
                     targets = b["label"].to(device, non_blocking=True)
-                    with torch.amp.autocast('cuda', enabled=use_amp):
+                    with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                         preds = model(imgs)
                         l = loss_fn_bce(preds, targets)
                     if use_amp:
@@ -298,12 +298,12 @@ def main():
             d_list, i_list, h_list = [], [], []
             with torch.no_grad():
                 for b in test_loader:
-                    with torch.amp.autocast('cuda', enabled=use_amp):
+                    with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                         preds = model(b["image"].to(device, non_blocking=True))
                     m = compute_segmentation_metrics(preds, b["label"].to(device, non_blocking=True))
-                    d_list.append(m["dice"])
-                    i_list.append(m["iou"])
-                    h_list.append(m["hd95"])
+                    d_list.extend(m["dice_per_sample"])
+                    i_list.extend(m["iou_per_sample"])
+                    h_list.extend(m["hd95_per_sample"])
             
             jepa_ckpt = ckpt_dir / f"finetuned_{type_name}_{frac_tag}.pt"
             torch.save({"model_state_dict": model.state_dict(), "test_dice": float(np.mean(d_list))}, jepa_ckpt)

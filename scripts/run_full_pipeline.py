@@ -27,6 +27,7 @@ def parse_args():
     parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv")
     parser.add_argument("--output_dir", type=str, default=None, help="Output root directory")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Pre-trained checkpoint directory")
+    parser.add_argument("--p_drop", type=float, default=0.25, help="Random modality dropout probability during training")
     parser.add_argument("--skip_latex", action="store_true", help="Skip LaTeX compilation")
     return parser.parse_args()
 
@@ -53,6 +54,7 @@ def main():
     if args.output_dir:
         base_flags.extend(["--output_dir", args.output_dir])
         
+    train_flags = list(base_flags) + ["--p_drop", str(args.p_drop)]
     ckpt_flags = []
     if args.checkpoint_dir:
         ckpt_flags.extend(["--checkpoint_dir", args.checkpoint_dir])
@@ -61,14 +63,14 @@ def main():
         print("\n" + "="*80)
         print("PHASE 1: FULL-DATA BENCHMARK (100% Labels, 50-Epoch SSL / 30-Epoch Baseline)")
         print("="*80)
-        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "ijepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
-        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "sigreg_jepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
-        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "visreg_jepa", "--epochs", "50", "--batch_size", "8"] + base_flags)
-        run_cmd([sys.executable, "scripts/train_unet.py", "--epochs", "30", "--batch_size", "8"] + base_flags)
-        run_cmd([sys.executable, "scripts/train_nnunet.py", "--epochs", "30", "--batch_size", "8"] + base_flags)
-        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "ijepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
-        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "sigreg_jepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
-        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "visreg_jepa", "--epochs", "30", "--batch_size", "8"] + base_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "ijepa", "--epochs", "50", "--batch_size", "8"] + train_flags)
+        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "sigreg_jepa", "--epochs", "50", "--batch_size", "8"] + train_flags)
+        run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "visreg_jepa", "--epochs", "50", "--batch_size", "8"] + train_flags)
+        run_cmd([sys.executable, "scripts/train_unet.py", "--epochs", "30", "--batch_size", "8"] + train_flags)
+        run_cmd([sys.executable, "scripts/train_nnunet.py", "--epochs", "30", "--batch_size", "8"] + train_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "ijepa", "--epochs", "30", "--batch_size", "8"] + train_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "sigreg_jepa", "--epochs", "30", "--batch_size", "8"] + train_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "visreg_jepa", "--epochs", "30", "--batch_size", "8"] + train_flags + ckpt_flags)
         run_cmd([sys.executable, "scripts/evaluate.py"] + ([f for f in base_flags if f != "--amp"]) + ckpt_flags)
 
     if args.mode in ["all", "low_data"]:

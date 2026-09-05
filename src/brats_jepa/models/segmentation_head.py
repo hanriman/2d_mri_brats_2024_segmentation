@@ -6,9 +6,35 @@ from .vision_transformer import VisionTransformerEncoder2D
 
 
 class ViTSegmentationDecoder(nn.Module):
-    """
-    Lightweight 4-stage transpose-convolutional upsampling decoder.
-    Transposes 2D ViT patch token grid [B, 225, 384] (15x15) to full 2D segmentation logits [B, out_channels, 240, 240].
+    r"""
+    Progressive 4-Stage Transpose-Convolutional Upsampling Decoder.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Spatial Token Reshaping & Progressive Upsampling:
+       The Vision Transformer produces 1D patch tokens [B, N=225, D=384]. This decoder reshapes
+       the sequence into a 2D spatial feature map of shape [B, D, 15, 15] and progressively
+       doubles resolution across 4 strided transpose convolutions:
+           15 \times 15 \xrightarrow{2\times} 30 \times 30 \xrightarrow{2\times} 60 \times 60
+           \xrightarrow{2\times} 120 \times 120 \xrightarrow{2\times} 240 \times 240
+       reconstructing full voxel-level resolution matching the original MRI scan.
+
+    2. Group Normalization (Wu & He, ECCV 2018):
+       Batch Normalization in small downstream fine-tuning batches (B <= 8) suffers from noisy
+       mean and variance estimates, which destabilizes fine-tuning. GroupNorm divides channels
+       into independent groups (e.g. 16, 8, 4), computing statistics along spatial and sub-channel
+       dimensions per-sample, guaranteeing robust convergence across variable batch sizes.
+
+    3. Controlled Capacity for Objective Representation Benchmarking:
+       The decoder is intentionally designed to be lightweight (~0.6M parameters).
+       A massive decoder (e.g., U-PerNet or Mask2Former) can compensate for poor encoder
+       representations. Restricting decoder capacity ensures that downstream segmentation
+       Dice scores directly reflect the semantic quality and linear separability of the
+       underlying self-supervised representations (I-JEPA vs SigReg vs VisReg).
+
+    References:
+    -----------
+    - Wu, Y., & He, K. (2018). "Group Normalization." ECCV 2018, pp. 3-19.
     """
     def __init__(self, in_dim: int = 384, out_channels: int = 1):
         super().__init__()
@@ -43,9 +69,24 @@ class ViTSegmentationDecoder(nn.Module):
         return self.decoder(x)
 
 class JEPASegmentationModel(nn.Module):
-    """
-    Downstream segmentation model coupling a pre-trained JEPA VisionTransformerEncoder2D
-    with a ViTSegmentationDecoder. Supports optional encoder freezing for linear/decoder probing.
+    r"""
+    Downstream Segmentation Architecture Coupling ViT Encoder and Convolutional Decoder.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Transfer Learning Protocol:
+       Couples a pre-trained JEPA VisionTransformerEncoder2D (I-JEPA, SigReg, or VisReg)
+       with the ViTSegmentationDecoder. In downstream evaluation, the model can be evaluated under
+       two distinct experimental regimes:
+       - **Full Fine-Tuning**: Both encoder and decoder weights are optimized on labeled 2D slices.
+       - **Decoder Probing (`freeze_encoder=True`)**: Encoder weights are completely frozen. Only the
+         lightweight decoder is trained. This tests whether the self-supervised representations
+         linearly encode spatial tumor boundaries without task-specific representation restructuring.
+
+    2. Strict Evaluation Mode for Frozen Encoder:
+       When `freeze_encoder=True`, `self.train(mode)` enforces `self.encoder.eval()`.
+       This guarantees that LayerNorm statistics and dropout layers within the pre-trained encoder
+       remain strictly deterministic, preventing stochastic noise from corrupting frozen representations.
     """
     def __init__(
         self,

@@ -26,9 +26,35 @@ def get_segmentation_transforms(split: str = "train", spatial_size=(240, 240)):
         ])
 
 class RandomModalityDropout(torch.nn.Module):
-    """
-    Randomly drops (zeros out) 1, 2, or 3 modality channels during training with probability p_drop.
-    Guarantees that at least one modality channel remains active for every slice in the batch.
+    r"""
+    Random Multi-Modal MRI Sequence Dropout Layer.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Clinical Neuro-Oncology Reality (Missing Modalities):
+       In clinical MRI practice, acquiring all four core sequences (T1, T1c, T2, FLAIR) for
+       every patient is frequently infeasible due to:
+       - Patient movement or scanner time limits in emergency triage.
+       - Renal insufficiency / contrast allergies precluding Gadolinium administration (no T1c).
+       - Inconsistent multi-center imaging acquisition protocols.
+       Models trained strictly on complete 4-channel sets experience catastrophic performance
+       degradation when even a single sequence is omitted.
+
+    2. Bernoulli Channel Masking with Non-Empty Fallback:
+       Each channel c \in \{0, 1, 2, 3\} is independently zeroed with probability p_{\text{drop}} = 0.25:
+           m_c \sim \text{Bernoulli}(1 - p_{\text{drop}})
+       If all 4 channels happen to be dropped simultaneously (\sum_c m_c = 0), a random channel
+       is guaranteed to be activated:
+           m_{c^*} = 1, \quad c^* \sim \text{Uniform}(\{0, 1, 2, 3\})
+       ensuring the network is never trained on degenerate all-zero inputs. This forces the encoder
+       to learn cross-modal feature redundancies and invariant anatomical representations.
+
+    References:
+    -----------
+    - Havaei, M., et al. (2017). "Brain tumor segmentation with Deep Neural Networks."
+      Medical Image Analysis, 35, 18-31.
+    - Dorent, R., et al. (2019). "Hetero-Modal Variational Encoder-Decoder for Joint Inpainting
+      and Segmentation." MICCAI 2019, pp. 523-531.
     """
     def __init__(self, p_drop: float = 0.25):
         super().__init__()
@@ -47,9 +73,32 @@ class RandomModalityDropout(torch.nn.Module):
         return x * mask
 
 class JEPAMaskingTransform:
-    """
-    Generates fixed-size block patch context and target masks for JEPA models (I-JEPA, SigReg, VisReg).
-    Ensures uniform tensor shapes across batches for seamless PyTorch collation.
+    r"""
+    Multi-Block Context and Target Masking Generator for Joint-Embedding Architectures.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Block Masking vs Point-Wise Pixel Masking:
+       Standard Masked Autoencoders (MAE) employ random point-wise patch masking (e.g. 75% uniform
+       dropout). In 2D medical images, adjacent patches exhibit extreme spatial autocorrelation;
+       missing individual patches can be easily interpolated via low-level edge continuity.
+       JEPA instead samples large contiguous rectangular blocks:
+       - **Target Blocks**: 4 blocks of size 5x5 patches (25 patches each).
+       - **Context Block**: 1 block of size 14x14 patches (filtered to exclude target overlap).
+       Large block removal destroys low-level texture shortcuts, forcing the model to understand
+       high-level anatomical geometry, organ symmetry, and global tissue morphology.
+
+    2. Uniform Tensor Length for Efficient Collation:
+       Standard I-JEPA implementations produce variable-length context token lists, requiring
+       complex nested tensors or ragged padding that slows down GPU data collation.
+       This implementation guarantees a constant N_{\text{ctx}} = 96 context patches per slice,
+       enabling seamless standard PyTorch batch collation and maximum GPU tensor core utilization.
+
+    References:
+    -----------
+    - Assran, M., et al. (2023). "Self-Supervised Learning from Images with a Joint-Embedding
+      Predictive Architecture." IEEE/CVF CVPR 2023.
+    - Bao, H., et al. (2021). "BEiT: BERT Pre-Training of Image Transformers." ICLR 2022.
     """
     def __init__(
         self,

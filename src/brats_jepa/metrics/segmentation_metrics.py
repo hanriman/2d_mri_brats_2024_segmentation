@@ -16,7 +16,24 @@ def _extract_surface_points(mask_2d: np.ndarray) -> np.ndarray:
     return pts
 
 def compute_dice_score(pred: torch.Tensor, target: torch.Tensor, threshold: float = 0.5, smooth: float = 1e-5, from_logits: bool = True) -> float:
-    """Computes Dice Similarity Coefficient (DSC) for binary segmentation predictions."""
+    r"""
+    Sørensen-Dice Similarity Coefficient (DSC) for Binary Segmentation.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Formulation:
+           \text{DSC} = \frac{2 |P \cap T| + \epsilon}{|P| + |T| + \epsilon} = \frac{2 \cdot \text{TP} + \epsilon}{2 \cdot \text{TP} + \text{FP} + \text{FN} + \epsilon}
+       Measures the volumetric overlap between predicted binary tumor mask P and ground truth T.
+       Smooth term \epsilon = 10^{-5} prevents division by zero when both prediction and ground
+       truth are empty (correctly classified non-tumor slices yield DSC = 1.0).
+
+    References:
+    -----------
+    - Dice, L. R. (1945). "Measures of the amount of ecologic association between species."
+      Ecology, 26(3), 297-302.
+    - Menze, B. H., et al. (2014). "The Multimodal Brain Tumor Image Segmentation Benchmark (BRATS)."
+      IEEE TMI, 34(10), 1993-2024.
+    """
     target_bin = (target > 0).float()
     if from_logits:
         pred_bin = (torch.sigmoid(pred) > threshold).float()
@@ -28,11 +45,28 @@ def compute_dice_score(pred: torch.Tensor, target: torch.Tensor, threshold: floa
     return dice.item()
 
 def compute_hd95_single(pred_bin: np.ndarray, target_bin: np.ndarray) -> float:
-    """
-    Computes 95th Percentile Hausdorff Distance (HD95) in pixels between surface boundary contours
-    of binary predicted and target masks (BraTS evaluation convention).
-    Returns 0.0 for identical masks. When only one mask is empty (complete miss or hallucination),
-    returns the image diagonal as the maximum possible distance penalty.
+    r"""
+    95th Percentile Symmetric Hausdorff Distance (HD95) in Pixel Units.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Boundary Distance vs Overlap Metrics:
+       While the Dice coefficient measures regional volume overlap, it is notoriously insensitive
+       to fine boundary contour errors, ragged margins, or satellite lesion hallucination.
+       HD95 measures spatial surface Euclidean separation:
+           d_H(P, T) = \max \left\{ P_{95\%} \min_{t \in \partial T} \|p - t\|_2, \; P_{95\%} \min_{p \in \partial P} \|t - p\|_2 \right\}
+       where \partial P, \partial T are morphological boundary contours. Taking the 95th percentile
+       eliminates extreme distance artifacts caused by single-pixel spurious outliers.
+
+    2. Boundary Failure Edge Cases:
+       - Identical masks (both empty or exact match) -> HD95 = 0.0 px.
+       - Complete miss or false alarm (one mask non-empty, other empty) -> penalized with the
+         maximum spatial distance possible: the image diagonal \sqrt{H^2 + W^2} = \sqrt{240^2 + 240^2} \approx 339.41 px.
+
+    References:
+    -----------
+    - Huttenlocher, D. P., Klanderman, G. A., & Rucklidge, W. J. (1993). "Comparing images using
+      the Hausdorff distance." IEEE TPAMI, 15(9), 850-863.
     """
     p_mask = (pred_bin > 0).astype(bool)
     t_mask = (target_bin > 0).astype(bool)
@@ -58,8 +92,23 @@ def compute_hd95_single(pred_bin: np.ndarray, target_bin: np.ndarray) -> float:
     return hd95
 
 def compute_segmentation_metrics(pred: torch.Tensor, target: torch.Tensor, threshold: float = 0.5, smooth: float = 1e-5) -> Dict[str, float]:
-    """Computes DSC, IoU, Precision, Recall, and HD95 (95th Percentile Hausdorff Distance).
-    Uses macro-averaging (per-sample then mean) following BraTS evaluation convention."""
+    r"""
+    Full Macro-Averaged BraTS Segmentation Benchmark Suite.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Macro-Averaging Protocol:
+       Computes DSC, IoU (Jaccard Index), Precision, Recall, and HD95 per individual slice,
+       then computes the population mean. Micro-averaging (pooling TP, FP, FN over all slices)
+       would allow large late-stage tumors (occupying ~10% of a slice) to statistically overshadow
+       difficult early-stage micro-tumors (< 0.5% volume). Macro-averaging guarantees equal
+       clinical weight to each diagnostic slice.
+
+    2. Returns Per-Sample Metric Arrays:
+       In addition to batch averages, returns per-sample arrays (`dice_per_sample`, etc.)
+       so evaluation scripts can concatenate every single test slice across batches without
+       statistical bias from uneven final batches (e.g. 1810 total test slices with batch size 8).
+    """
     if pred.shape != target.shape:
         raise ValueError(f"Shape mismatch: pred {pred.shape} vs target {target.shape}")
         

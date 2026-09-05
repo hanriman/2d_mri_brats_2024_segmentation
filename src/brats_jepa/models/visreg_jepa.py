@@ -7,10 +7,29 @@ from .vision_transformer import JEPAPredictor, VisionTransformerEncoder2D
 
 
 class VisRegJEPA(nn.Module):
-    """
-    VisReg JEPA (VISReg): Heuristic-free Joint-Embedding Predictive Architecture.
-    Does NOT use an EMA teacher encoder. Representation collapse is prevented mathematically
-    by Variance-Invariance-Sketching Regularization (VISReg) (Wu, Balestriero, Levine, 2026).
+    r"""
+    VisReg JEPA (VISReg): Single-Encoder Predictive Architecture with Decoupled Sliced Regularization.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Heuristic-Free Predictive Learning via Optimal Transport:
+       Like SigReg, VisReg JEPA removes the requirement for an asymmetric EMA teacher network.
+       Instead of hypothesis testing via characteristic functions, VisReg applies 1D Sliced
+       Wasserstein Distance (SWD) against standard normal quantiles, providing a geometric
+       optimal-transport formulation for representation shape matching.
+
+    2. Decoupled Variance-Sliced Projection:
+       The projector MLP (384 \to 1024 \to 128) maps latent tokens into a compact 128-dimensional
+       manifold for random 1D hyper-spherical projections. The separation between encoder space
+       and projector space ensures the Vision Transformer preserves rich spatial features for
+       downstream dense pixel prediction (segmentation).
+
+    References:
+    -----------
+    - Wu, Z., Balestriero, R., & Levine, S. (2026). "Visual Representation Learning via Regularization."
+      arXiv:2606.02572 (VISReg).
+    - Bonneel, N., et al. (2015). "Sliced and Radon transform Wasserstein metrics of distributions."
+      Journal of Mathematical Imaging and Vision, 51(1), 22-45.
     """
     def __init__(
         self,

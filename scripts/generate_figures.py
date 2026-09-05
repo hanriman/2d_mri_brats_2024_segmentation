@@ -57,10 +57,11 @@ def main():
     # 2. Representation Collapse Benchmark Plot
     if summary_file.exists():
         df = pd.read_csv(summary_file)
-        ssl_df = df[df["effective_rank"] != "N/A (CNN)"].copy()
-        if len(ssl_df) > 0:
-            ssl_df["effective_rank"] = pd.to_numeric(ssl_df["effective_rank"], errors="coerce")
-            ssl_df["avg_cosine_sim"] = pd.to_numeric(ssl_df["avg_cosine_sim"], errors="coerce")
+        if "effective_rank" in df.columns and "avg_cosine_sim" in df.columns:
+            ssl_df = df[df["effective_rank"] != "N/A (CNN)"].copy()
+            if len(ssl_df) > 0:
+                ssl_df["effective_rank"] = pd.to_numeric(ssl_df["effective_rank"], errors="coerce")
+                ssl_df["avg_cosine_sim"] = pd.to_numeric(ssl_df["avg_cosine_sim"], errors="coerce")
             
             _, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
             
@@ -90,7 +91,7 @@ def main():
     if low_data_csv.exists():
         ld_df = pd.read_csv(low_data_csv)
         plt.figure(figsize=(10, 5.5))
-        sns.lineplot(data=ld_df, x="label_fraction", y="test_dice", hue="model", style="model", markers=True, dashes=False, linewidth=2.5, s=9)
+        sns.lineplot(data=ld_df, x="label_fraction", y="test_dice", hue="model", style="model", markers=True, dashes=False, linewidth=2.5, markersize=9)
         plt.title("Low-Data Label Efficiency Benchmark (1% to 100% Annotations)")
         plt.xlabel("Percentage of Labeled Training Slices")
         plt.ylabel("Downstream Test Dice Score")
@@ -123,7 +124,11 @@ def main():
         print(f"Generated figure: {out_fig_ood}")
 
     # 5. BraTS-MEN-RT Cross-Pathology & Missing-Modality OOD Plot
-    men_ood_csv = metrics_dir.parent / "experiments" / "v4_men_rt_ood" / "metrics" / "men_rt_ood_benchmark_summary.csv"
+    men_ood_csv = metrics_dir / "men_rt_ood_benchmark_summary.csv"
+    if not men_ood_csv.exists():
+        exp_men = metrics_dir.parent / "experiments" / "v4_men_rt_ood" / "metrics" / "men_rt_ood_benchmark_summary.csv"
+        if exp_men.exists():
+            men_ood_csv = exp_men
     if men_ood_csv.exists():
         men_df = pd.read_csv(men_ood_csv)
         plt.figure(figsize=(11, 5.5))

@@ -115,11 +115,11 @@ def main():
                 eval_samples += images.shape[0]
                 logits = unet(images)
                 m = compute_segmentation_metrics(logits, labels)
-                dice_list.append(m["dice"])
-                iou_list.append(m["iou"])
-                prec_list.append(m["precision"])
-                rec_list.append(m["recall"])
-                hd95_list.append(m["hd95"])
+                dice_list.extend(m["dice_per_sample"])
+                iou_list.extend(m["iou_per_sample"])
+                prec_list.extend(m["precision_per_sample"])
+                rec_list.extend(m["recall_per_sample"])
+                hd95_list.extend(m["hd95_per_sample"])
         infer_time = time.perf_counter() - t0
         ms_per_slice = (infer_time / eval_samples) * 1000.0 if eval_samples > 0 else 0.0
         
@@ -172,11 +172,11 @@ def main():
                 eval_samples += images.shape[0]
                 logits = nnunet(images)
                 m = compute_segmentation_metrics(logits, labels)
-                dice_list.append(m["dice"])
-                iou_list.append(m["iou"])
-                prec_list.append(m["precision"])
-                rec_list.append(m["recall"])
-                hd95_list.append(m["hd95"])
+                dice_list.extend(m["dice_per_sample"])
+                iou_list.extend(m["iou_per_sample"])
+                prec_list.extend(m["precision_per_sample"])
+                rec_list.extend(m["recall_per_sample"])
+                hd95_list.extend(m["hd95_per_sample"])
         infer_time = time.perf_counter() - t0
         ms_per_slice = (infer_time / eval_samples) * 1000.0 if eval_samples > 0 else 0.0
 
@@ -260,11 +260,11 @@ def main():
                     eval_samples += images.shape[0]
                     logits = model(images)
                     m = compute_segmentation_metrics(logits, labels)
-                    dice_list.append(m["dice"])
-                    iou_list.append(m["iou"])
-                    prec_list.append(m["precision"])
-                    rec_list.append(m["recall"])
-                    hd95_list.append(m["hd95"])
+                    dice_list.extend(m["dice_per_sample"])
+                    iou_list.extend(m["iou_per_sample"])
+                    prec_list.extend(m["precision_per_sample"])
+                    rec_list.extend(m["recall_per_sample"])
+                    hd95_list.extend(m["hd95_per_sample"])
             infer_time = time.perf_counter() - t0
             ms_per_slice = (infer_time / eval_samples) * 1000.0 if eval_samples > 0 else 0.0
 

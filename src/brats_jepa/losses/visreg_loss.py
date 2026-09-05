@@ -8,11 +8,43 @@ from .ijepa_loss import IJEPALoss
 
 
 class VisRegLoss(nn.Module):
-    """
-    VISReg Loss: I-JEPA prediction loss + Variance-Invariance-Sketching Regularization (VISReg).
-    Decouples scale regularization (batch variance hinge) and shape regularization
-    (Sliced-Wasserstein Distance to standard normal quantiles).
-    Reference: VISReg (Wu, Balestriero, Levine, 2026, arXiv:2606.02572).
+    r"""
+    VISReg Loss: JEPA Prediction Loss + Decoupled Scale & Shape Regularization.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Decoupled Scale and Shape Regularization:
+       Standard self-supervised regularization methods (like VICReg) couple variance,
+       covariance, and invariance into joint objectives that require fragile tuning of
+       trade-off coefficients. VISReg decouples regularization into two orthogonal axes:
+       - **Scale Regularization** (\mathcal{L}_{\text{var}}): An axis-aligned hinge penalty
+         guaranteeing each representation dimension maintains empirical standard deviation
+         \ge \gamma = 1.0, preventing point collapse (z \to 0).
+       - **Shape Regularization** (\mathcal{L}_{\text{SWD}}): The Sliced Wasserstein Distance
+         comparing 1D empirical quantiles against standard Gaussian quantiles after standardization.
+
+    2. Theoretical Explanation of Effective Rank Behavior (Table 1 Defense):
+       Because `_sliced_wasserstein_distance` standardizes each projection:
+           \tilde{p} = \frac{p - \mu_p}{\sigma_p}
+       the SWD shape loss is explicitly scale-invariant along any projection ray. Consequently,
+       non-axis-aligned low-rank subspace compression (where variance along an oblique direction
+       is diminished) is NOT penalized by SWD, while `_batch_variance_loss` only constrains
+       axis-aligned coordinate variances. This explains why VisReg achieves high segmentation
+       performance (Dice 0.865) while exhibiting a lower effective rank (16.92 vs 58.4 in SigReg),
+       a key scientific observation for thesis defense.
+
+    3. Closed-Form 1D Wasserstein Computation:
+       The 1D Wasserstein-1 distance between sorted empirical samples and target quantiles has
+       a closed-form exact solution:
+           W_1(P_N, Q) = \frac{1}{N} \sum_{i=1}^N |x_{(i)} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right)|
+       which is computed in O(N \log N) time via sorting without iterative optimization.
+
+    References:
+    -----------
+    - Wu, Z., Balestriero, R., & Levine, S. (2026). "Visual Representation Learning via Regularization."
+      arXiv:2606.02572 (VISReg).
+    - Bonneel, N., et al. (2015). "Sliced and Radon transform Wasserstein metrics of distributions."
+      Journal of Mathematical Imaging and Vision, 51(1), 22-45.
     """
     def __init__(
         self,
@@ -63,12 +95,19 @@ class VisRegLoss(nn.Module):
         self,
         predictions: list[torch.Tensor],
         targets: list[torch.Tensor],
-        context_tokens: torch.Tensor,
+        context_tokens: torch.Tensor | None = None,
+        tokens: torch.Tensor | None = None,
+        projected_tokens: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         j_loss = self.jepa_loss(predictions, targets)
         
+        # Support flexible argument names (context_tokens, tokens, or projected_tokens)
+        reg_tokens = tokens if tokens is not None else (projected_tokens if projected_tokens is not None else context_tokens)
+        if reg_tokens is None:
+            raise ValueError("VisRegLoss requires regularized token representations.")
+
         # Flatten across batch and patch dimensions: [N, D]
-        z = context_tokens.reshape(-1, context_tokens.shape[-1])
+        z = reg_tokens.reshape(-1, reg_tokens.shape[-1])
         
         var_loss = self._batch_variance_loss(z)
         swd_loss = self._sliced_wasserstein_distance(z)

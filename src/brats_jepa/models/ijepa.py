@@ -8,9 +8,42 @@ from .vision_transformer import JEPAPredictor, VisionTransformerEncoder2D
 
 
 class IJEPA(nn.Module):
-    """
-    Image Joint-Embedding Predictive Architecture (I-JEPA) for 2D BraTS MRI.
-    Predicts target patch representations from context patches in latent space.
+    r"""
+    Image Joint-Embedding Predictive Architecture (I-JEPA) for 2D Multi-Modal MRI.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Latent Prediction vs Pixel Reconstruction:
+       Traditional Masked Autoencoders (e.g., MAE) optimize pixel-level reconstruction:
+           \min_\theta \| \hat{x}_{\text{recon}} - x_{\text{voxel}} \|_2^2
+       In multi-modal brain MRI (T1, T1c, T2, FLAIR), a significant fraction of high-frequency
+       pixel variance stems from scanner acquisition noise, Gibbs ringing, and microscopic tissue
+       heterogeneity rather than clinical semantics. I-JEPA discards pixel reconstruction and
+       instead predicts representations in latent space:
+           \min_\theta \mathcal{D}(\hat{s}_y, s_y)
+       forcing the model to ignore imperceptible voxel noise and encode high-level anatomical
+       structure and tumor topology.
+
+    2. EMA Momentum Teacher & Non-Collapsing Dynamics:
+       To prevent the trivial collapse solution (where the encoder outputs constant vectors),
+       the target encoder parameters \theta_t are updated via Exponential Moving Average (EMA):
+           \theta_t \leftarrow m \theta_t + (1 - m) \theta_c, \quad m = 0.996
+       The stop-gradient on the target encoder, combined with momentum temporal smoothing,
+       acts as an implicit contrastive constraint that propels representation expansion
+       without requiring negative sample pairs (Grill et al., 2020; Assran et al., 2023).
+
+    3. Teacher Evaluation Mode Invariance:
+       During training, `self.target_encoder.eval()` is strictly maintained to ensure that
+       stochastic dropout and non-deterministic layers are deactivated, providing completely
+       consistent targets for the predictor.
+
+    References:
+    -----------
+    - Assran, M., Duval, Q., Misra, I., Bojanowski, P., Vincent, P., Rabbat, M., LeCun, Y., &
+      Ballas, N. (2023). "Self-Supervised Learning from Images with a Joint-Embedding
+      Predictive Architecture." IEEE/CVF CVPR 2023, pp. 15619-15629.
+    - Grill, J. B., et al. (2020). "Bootstrap Your Own Latent - A New Approach to Self-Supervised
+      Learning." NeurIPS 2020.
     """
     def __init__(
         self,
@@ -49,6 +82,12 @@ class IJEPA(nn.Module):
             depth=predictor_depth,
             num_heads=num_heads,
         )
+
+    def train(self, mode: bool = True):
+        """Override to ensure EMA teacher target encoder always stays in eval mode."""
+        super().train(mode)
+        self.target_encoder.eval()
+        return self
 
     @torch.no_grad()
     def update_target_encoder(self, momentum: float | None = None):

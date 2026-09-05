@@ -141,7 +141,7 @@ def main():
         unet = BraTS2DUNet(in_channels=4, out_channels=1).to(device)
         loss_fn_bce = CombinedDiceBCELoss()
         opt_u = torch.optim.AdamW(unet.parameters(), lr=args.lr, weight_decay=1e-4)
-        sched_u = torch.optim.lr_scheduler.CosineAnnealingLR(opt_u, T_max=args.epochs)
+        sched_u = torch.optim.lr_scheduler.CosineAnnealingLR(opt_u, T_max=args.epochs, eta_min=1e-6)
         scaler_u = torch.amp.GradScaler('cuda', enabled=use_amp)
         for _ in range(args.epochs):
             unet.train()
@@ -197,7 +197,7 @@ def main():
         nnunet = BraTS2DnnUNet(in_channels=4, out_channels=1, deep_supervision=True).to(device)
         loss_fn_ds = DeepSupervisionLoss()
         opt_nn = torch.optim.AdamW(nnunet.parameters(), lr=2e-4, weight_decay=1e-5)
-        sched_nn = torch.optim.lr_scheduler.CosineAnnealingLR(opt_nn, T_max=args.epochs)
+        sched_nn = torch.optim.lr_scheduler.CosineAnnealingLR(opt_nn, T_max=args.epochs, eta_min=1e-6)
         scaler_nn = torch.amp.GradScaler('cuda', enabled=use_amp)
         for _ in range(args.epochs):
             nnunet.train()
@@ -270,7 +270,7 @@ def main():
                 logger.warning(f"No SSL pre-trained weights found for {type_name} in {ssl_base_dir}. Training from scratch!")
                 
             opt_j = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-            sched_j = torch.optim.lr_scheduler.CosineAnnealingLR(opt_j, T_max=args.epochs)
+            sched_j = torch.optim.lr_scheduler.CosineAnnealingLR(opt_j, T_max=args.epochs, eta_min=1e-6)
             scaler_j = torch.amp.GradScaler('cuda', enabled=use_amp)
             for _ in range(args.epochs):
                 model.train()

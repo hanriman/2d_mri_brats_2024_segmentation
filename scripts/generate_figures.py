@@ -28,9 +28,25 @@ def main():
     
     sns.set_theme(style="whitegrid", font_scale=1.1)
     
+    def resolve_summary_csv(filename: str) -> Path | None:
+        p = metrics_dir / filename
+        if p.exists():
+            return p
+        exp_dir = metrics_dir.parent / "experiments"
+        if exp_dir.exists():
+            matches = list(exp_dir.glob(f"**/{filename}"))
+            if matches:
+                matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                return matches[0]
+        all_matches = list(metrics_dir.parent.glob(f"**/{filename}"))
+        if all_matches:
+            all_matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            return all_matches[0]
+        return None
+
     # 1. Plot Downstream Segmentation Performance Summary (Test Dice & HD95)
-    summary_file = metrics_dir / "evaluation_benchmark_summary.csv"
-    if summary_file.exists():
+    summary_file = resolve_summary_csv("evaluation_benchmark_summary.csv")
+    if summary_file and summary_file.exists():
         df = pd.read_csv(summary_file)
         
         _, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
@@ -55,7 +71,7 @@ def main():
         print(f"Generated figure: {out_fig1}")
 
     # 2. Representation Collapse Benchmark Plot
-    if summary_file.exists():
+    if summary_file and summary_file.exists():
         df = pd.read_csv(summary_file)
         if "effective_rank" in df.columns and "avg_cosine_sim" in df.columns:
             ssl_df = df[df["effective_rank"] != "N/A (CNN)"].copy()
@@ -82,13 +98,8 @@ def main():
             print(f"Generated figure: {out_fig2}")
 
     # 3. Low-Data Label Efficiency Curve Plot (1% to 100% Labels)
-    low_data_csv = metrics_dir / "low_data_benchmark_summary.csv"
-    if not low_data_csv.exists():
-        exp_low_data = metrics_dir.parent / "experiments" / "v2_low_data_efficiency" / "metrics" / "low_data_benchmark_summary.csv"
-        if exp_low_data.exists():
-            low_data_csv = exp_low_data
-            
-    if low_data_csv.exists():
+    low_data_csv = resolve_summary_csv("low_data_benchmark_summary.csv")
+    if low_data_csv and low_data_csv.exists():
         ld_df = pd.read_csv(low_data_csv)
         plt.figure(figsize=(10, 5.5))
         sns.lineplot(data=ld_df, x="label_fraction", y="test_dice", hue="model", style="model", markers=True, dashes=False, linewidth=2.5, markersize=9)
@@ -103,13 +114,8 @@ def main():
         print(f"Generated figure: {out_fig_ld}")
 
     # 4. Out-of-Distribution (OOD) Scanner Generalization Plot
-    ood_csv = metrics_dir / "ood_benchmark_summary.csv"
-    if not ood_csv.exists():
-        exp_ood = metrics_dir.parent / "experiments" / "v3_ood_generalization" / "metrics" / "ood_benchmark_summary.csv"
-        if exp_ood.exists():
-            ood_csv = exp_ood
-            
-    if ood_csv.exists():
+    ood_csv = resolve_summary_csv("ood_benchmark_summary.csv")
+    if ood_csv and ood_csv.exists():
         ood_df = pd.read_csv(ood_csv)
         plt.figure(figsize=(11, 5.5))
         sns.barplot(data=ood_df, x="domain_shift", y="test_dice", hue="model", palette="Set2")
@@ -124,12 +130,8 @@ def main():
         print(f"Generated figure: {out_fig_ood}")
 
     # 5. BraTS-MEN-RT Cross-Pathology & Missing-Modality OOD Plot
-    men_ood_csv = metrics_dir / "men_rt_ood_benchmark_summary.csv"
-    if not men_ood_csv.exists():
-        exp_men = metrics_dir.parent / "experiments" / "v4_men_rt_ood" / "metrics" / "men_rt_ood_benchmark_summary.csv"
-        if exp_men.exists():
-            men_ood_csv = exp_men
-    if men_ood_csv.exists():
+    men_ood_csv = resolve_summary_csv("men_rt_ood_benchmark_summary.csv")
+    if men_ood_csv and men_ood_csv.exists():
         men_df = pd.read_csv(men_ood_csv)
         plt.figure(figsize=(11, 5.5))
         sns.barplot(data=men_df, x="adaptation_strategy", y="men_rt_test_dice", hue="model", palette="Accent")

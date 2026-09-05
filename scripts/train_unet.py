@@ -2,6 +2,8 @@ import argparse
 import time
 from pathlib import Path
 
+import numpy as np
+
 import torch
 from torch.utils.data import DataLoader
 
@@ -144,7 +146,7 @@ def main():
 
         model.eval()
         val_loss = 0.0
-        val_dice = 0.0
+        all_dice = []
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(val_loader):
@@ -159,11 +161,11 @@ def main():
 
                 val_loss += loss.item()
                 metrics = compute_segmentation_metrics(logits, labels)
-                val_dice += metrics["dice"]
+                all_dice.extend(metrics["dice_per_sample"])
 
         n_val_batches = min(len(val_loader), args.max_batches) if args.max_batches else len(val_loader)
         avg_val_loss = val_loss / max(1, n_val_batches)
-        avg_val_dice = val_dice / max(1, n_val_batches)
+        avg_val_dice = float(np.mean(all_dice)) if all_dice else 0.0
         epoch_duration = time.perf_counter() - epoch_start
 
         logger.info(f"Epoch [{epoch:02d}/{args.epochs:02d}] | Train Loss: {avg_train_loss:.5f} | Val Loss: {avg_val_loss:.5f} | Val Dice: {avg_val_dice:.5f} | Duration: {epoch_duration:.2f}s")

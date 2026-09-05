@@ -25,6 +25,27 @@ def get_segmentation_transforms(split: str = "train", spatial_size=(240, 240)):
             CastToTyped(keys=["image", "label"], dtype=(torch.float32, torch.float32)),
         ])
 
+class RandomModalityDropout(torch.nn.Module):
+    """
+    Randomly drops (zeros out) 1, 2, or 3 modality channels during training with probability p_drop.
+    Guarantees that at least one modality channel remains active for every slice in the batch.
+    """
+    def __init__(self, p_drop: float = 0.25):
+        super().__init__()
+        self.p_drop = p_drop
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if not self.training or self.p_drop <= 0.0:
+            return x
+        B, C, H, W = x.shape
+        mask = (torch.rand(B, C, 1, 1, device=x.device) > self.p_drop).float()
+        all_zero = (mask.sum(dim=1, keepdim=True) == 0)
+        # Fallback: activate a random channel for any slice where all modalities were dropped
+        random_channel = torch.randint(0, C, (B, 1, 1, 1), device=x.device)
+        fallback = torch.zeros_like(mask).scatter_(1, random_channel, 1.0)
+        mask = torch.where(all_zero, fallback, mask)
+        return x * mask
+
 class JEPAMaskingTransform:
     """
     Generates fixed-size block patch context and target masks for JEPA models (I-JEPA, SigReg, VisReg).

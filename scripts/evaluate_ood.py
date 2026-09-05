@@ -16,7 +16,15 @@ from brats_jepa.utils import get_device, get_logger, set_seed
 
 
 def apply_rician_noise(img: torch.Tensor, noise_std: float = 0.15) -> torch.Tensor:
-    """Applies additive noise on foreground tissue to simulate low SNR / 1.5T MRI without inverting negative Z-scores."""
+    """Applies additive Gaussian noise on foreground tissue approximating high-SNR asymptotic Rician noise.
+
+    Note: In magnitude MRI data, noise follows a Rician distribution: M = sqrt((S + n1)^2 + n2^2).
+    However, on zero-mean standardized Z-score normalized inputs (where x can be negative), applying
+    the magnitude Rician formula directly would destroy negative values and distort the distribution.
+    In the high-SNR regime (SNR >> 1), the Rician distribution is asymptotically Gaussian:
+    Rician(nu, sigma) -> Normal(nu, sigma^2). We apply additive foreground Gaussian noise to
+    faithfully simulate scanner acquisition noise on standardized slices without non-physical rectification.
+    """
     noise = torch.randn_like(img) * noise_std
     mask = (img != 0).float()
     return (img + noise) * mask
@@ -33,6 +41,7 @@ def apply_bias_field(img: torch.Tensor, scale: float = 0.3) -> torch.Tensor:
 def parse_args():
     parser = argparse.ArgumentParser(description="Out-of-Distribution (OOD) Scanner Domain Generalization Benchmark")
     parser.add_argument("--exp_version", type=str, default="v3_ood_generalization", help="Experiment version directory tag")
+    parser.add_argument("--output_dir", type=str, default=None, help="Custom output base directory")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Directory containing model checkpoints")
     parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv manifest file")
     parser.add_argument("--device", type=str, default="auto", help="Device")
@@ -44,7 +53,11 @@ def main():
     set_seed(args.seed)
     device = get_device(args.device)
 
-    exp_dir = Path("outputs/experiments") / args.exp_version
+    if args.output_dir:
+        base_out = Path(args.output_dir).resolve()
+        exp_dir = base_out / "experiments" / args.exp_version if args.exp_version else base_out
+    else:
+        exp_dir = Path("outputs/experiments") / args.exp_version
     metrics_dir = exp_dir / "metrics"
     logs_dir = exp_dir / "logs"
     for d in [exp_dir, metrics_dir, logs_dir]:
@@ -68,7 +81,7 @@ def main():
 
     domain_shifts = {
         "Clean Standard Test": lambda x: x,
-        "Rician Noise (1.5T Shift)": lambda x: apply_rician_noise(x, noise_std=0.15),
+        "Rician Noise (1.5T Shift Approx)": lambda x: apply_rician_noise(x, noise_std=0.15),
         "Bias Field Inhomogeneity (Coil Shift)": lambda x: apply_bias_field(x, scale=0.35),
     }
 

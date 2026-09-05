@@ -43,7 +43,13 @@ class VisRegLoss(nn.Module):
         
         # 1D slices: [N, M]
         proj = z @ u
-        sorted_proj, _ = torch.sort(proj, dim=0)  # [N, M]
+        
+        # Standardize projections along each slice to isolate distribution shape from scale & location
+        proj_mean = proj.mean(dim=0, keepdim=True)
+        proj_std = torch.sqrt(proj.var(dim=0, unbiased=False, keepdim=True) + 1e-6)
+        proj_stdized = (proj - proj_mean) / proj_std
+        
+        sorted_proj, _ = torch.sort(proj_stdized, dim=0)  # [N, M]
         
         # Analytical standard normal N(0, 1) quantiles: Phi^{-1}((i - 0.5) / N)
         probs = (torch.arange(1, N + 1, device=z.device, dtype=torch.float32) - 0.5) / N

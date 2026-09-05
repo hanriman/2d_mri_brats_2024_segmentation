@@ -13,7 +13,7 @@ from brats_jepa.config import (
     ensure_directories,
     get_metadata_path,
 )
-from brats_jepa.data import BraTS2DDataset
+from brats_jepa.data import BraTS2DDataset, RandomModalityDropout
 from brats_jepa.losses import CombinedDiceBCELoss
 from brats_jepa.metrics import compute_segmentation_metrics
 from brats_jepa.models import BraTS2DUNet
@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=30, help="Training epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
+    parser.add_argument("--p_drop", type=float, default=0.0, help="Random modality dropout probability during training")
     parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv manifest file")
     parser.add_argument("--output_dir", type=str, default=None, help="Custom output directory for checkpoints and logs")
     parser.add_argument("--num_workers", type=int, default=DEFAULT_NUM_WORKERS,
@@ -106,6 +107,7 @@ def main():
     metric_tracker = MetricTracker()
     best_dice = 0.0
     start_total_time = time.perf_counter()
+    mod_drop = RandomModalityDropout(p_drop=args.p_drop)
 
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.perf_counter()
@@ -115,7 +117,7 @@ def main():
         for batch_idx, batch in enumerate(train_loader):
             if args.max_batches and batch_idx >= args.max_batches:
                 break
-            images = batch["image"].to(device, non_blocking=True)
+            images = mod_drop(batch["image"].to(device, non_blocking=True))
             labels = batch["label"].to(device, non_blocking=True)
 
             optimizer.zero_grad()

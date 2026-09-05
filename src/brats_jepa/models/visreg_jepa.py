@@ -18,6 +18,7 @@ class VisRegJEPA(nn.Module):
         patch_size: int = 16,
         in_channels: int = 4,
         embed_dim: int = 384,
+        proj_dim: int = 128,
         encoder_depth: int = 8,
         predictor_depth: int = 4,
         num_heads: int = 6,
@@ -36,6 +37,15 @@ class VisRegJEPA(nn.Module):
             embed_dim=embed_dim,
             depth=encoder_depth,
             num_heads=num_heads,
+        )
+        
+        # Projector MLP: maps encoder representations (D=384) to compact space (D_proj=128)
+        # for Sliced-Wasserstein Gaussian sketching, isolating representation from collapse prevention.
+        self.projector = nn.Sequential(
+            nn.Linear(embed_dim, 1024),
+            nn.LayerNorm(1024),
+            nn.GELU(),
+            nn.Linear(1024, proj_dim),
         )
         
         # Latent Predictor
@@ -64,6 +74,9 @@ class VisRegJEPA(nn.Module):
         
         # 2. Forward encoder on ONLY context patches WITH gradients (no attention leakage)
         context_tokens = self.context_encoder(images, patch_indices=context_indices)
+        
+        # 3. Pass context tokens through projector for VISReg Sliced-Wasserstein regularization
+        projected_tokens = self.projector(context_tokens)  # [B, N_ctx, proj_dim]
             
         predictions = []
         targets = []
@@ -82,6 +95,7 @@ class VisRegJEPA(nn.Module):
             "predictions": predictions,
             "targets": targets,
             "context_tokens": context_tokens,
+            "projected_tokens": projected_tokens,
             "target_tokens": full_tokens,
             "var_weight": self.var_weight,
             "swd_weight": self.swd_weight,

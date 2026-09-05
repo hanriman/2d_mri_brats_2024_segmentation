@@ -18,27 +18,11 @@ from brats_jepa.config import (
     ensure_directories,
     get_metadata_path,
 )
-from brats_jepa.data import BraTS2DDataset
+from brats_jepa.data import BraTS2DDataset, RandomModalityDropout
 from brats_jepa.losses import CombinedDiceBCELoss, DeepSupervisionLoss
 from brats_jepa.metrics import compute_segmentation_metrics
 from brats_jepa.models import IJEPA, BraTS2DnnUNet, BraTS2DUNet, JEPASegmentationModel, SigRegJEPA, VisRegJEPA
 from brats_jepa.utils import MetricTracker, get_device, get_logger, set_seed
-
-
-class RandomModalityDropout(nn.Module):
-    """Randomly zero out 1, 2, or 3 modality channels during training with probability p_drop."""
-    def __init__(self, p_drop: float = 0.25):
-        super().__init__()
-        self.p_drop = p_drop
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if not self.training or self.p_drop == 0:
-            return x
-        B, C, H, W = x.shape
-        mask = (torch.rand(B, C, 1, 1, device=x.device) > self.p_drop).float()
-        all_zero = (mask.sum(dim=1, keepdim=True) == 0)
-        mask = torch.where(all_zero, torch.ones_like(mask), mask)
-        return x * mask
 
 
 def parse_args():
@@ -157,6 +141,7 @@ def main():
         unet = BraTS2DUNet(in_channels=4, out_channels=1).to(device)
         loss_fn_bce = CombinedDiceBCELoss()
         opt_u = torch.optim.AdamW(unet.parameters(), lr=args.lr, weight_decay=1e-4)
+        sched_u = torch.optim.lr_scheduler.CosineAnnealingLR(opt_u, T_max=args.epochs)
         scaler_u = torch.amp.GradScaler('cuda', enabled=use_amp)
         for _ in range(args.epochs):
             unet.train()
@@ -167,9 +152,17 @@ def main():
                 with torch.amp.autocast('cuda', enabled=use_amp):
                     preds = unet(imgs)
                     l = loss_fn_bce(preds, targets)
-                scaler_u.scale(l).backward()
-                scaler_u.step(opt_u)
-                scaler_u.update()
+                if use_amp:
+                    scaler_u.scale(l).backward()
+                    scaler_u.unscale_(opt_u)
+                    torch.nn.utils.clip_grad_norm_(unet.parameters(), max_norm=1.0)
+                    scaler_u.step(opt_u)
+                    scaler_u.update()
+                else:
+                    l.backward()
+                    torch.nn.utils.clip_grad_norm_(unet.parameters(), max_norm=1.0)
+                    opt_u.step()
+            sched_u.step()
         u_time = time.perf_counter() - t_start
         
         unet.eval()
@@ -204,6 +197,7 @@ def main():
         nnunet = BraTS2DnnUNet(in_channels=4, out_channels=1, deep_supervision=True).to(device)
         loss_fn_ds = DeepSupervisionLoss()
         opt_nn = torch.optim.AdamW(nnunet.parameters(), lr=2e-4, weight_decay=1e-5)
+        sched_nn = torch.optim.lr_scheduler.CosineAnnealingLR(opt_nn, T_max=args.epochs)
         scaler_nn = torch.amp.GradScaler('cuda', enabled=use_amp)
         for _ in range(args.epochs):
             nnunet.train()
@@ -214,9 +208,17 @@ def main():
                 with torch.amp.autocast('cuda', enabled=use_amp):
                     preds = nnunet(imgs)
                     l = loss_fn_ds(preds, targets)
-                scaler_nn.scale(l).backward()
-                scaler_nn.step(opt_nn)
-                scaler_nn.update()
+                if use_amp:
+                    scaler_nn.scale(l).backward()
+                    scaler_nn.unscale_(opt_nn)
+                    torch.nn.utils.clip_grad_norm_(nnunet.parameters(), max_norm=1.0)
+                    scaler_nn.step(opt_nn)
+                    scaler_nn.update()
+                else:
+                    l.backward()
+                    torch.nn.utils.clip_grad_norm_(nnunet.parameters(), max_norm=1.0)
+                    opt_nn.step()
+            sched_nn.step()
         nn_time = time.perf_counter() - t_start
         
         nnunet.eval()
@@ -268,6 +270,7 @@ def main():
                 logger.warning(f"No SSL pre-trained weights found for {type_name} in {ssl_base_dir}. Training from scratch!")
                 
             opt_j = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+            sched_j = torch.optim.lr_scheduler.CosineAnnealingLR(opt_j, T_max=args.epochs)
             scaler_j = torch.amp.GradScaler('cuda', enabled=use_amp)
             for _ in range(args.epochs):
                 model.train()
@@ -278,9 +281,17 @@ def main():
                     with torch.amp.autocast('cuda', enabled=use_amp):
                         preds = model(imgs)
                         l = loss_fn_bce(preds, targets)
-                    scaler_j.scale(l).backward()
-                    scaler_j.step(opt_j)
-                    scaler_j.update()
+                    if use_amp:
+                        scaler_j.scale(l).backward()
+                        scaler_j.unscale_(opt_j)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        scaler_j.step(opt_j)
+                        scaler_j.update()
+                    else:
+                        l.backward()
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        opt_j.step()
+                sched_j.step()
             j_time = time.perf_counter() - t_start
             
             model.eval()

@@ -91,3 +91,31 @@ def test_sigreg_device_transfer():
     assert res["loss"] > 0.0
     res["loss"].backward()
     assert ctx_tokens.grad is not None
+
+
+def test_visreg_scale_shape_decoupling():
+    torch.manual_seed(42)
+    loss_fn = VisRegLoss(var_weight=1.0, swd_weight=1.0, num_projections=128)
+    preds = [torch.randn(4, 20, 128)]
+    tgts = [torch.randn(4, 20, 128)]
+
+    # 1. High-variance Gaussian tokens (std = 2.0):
+    # Standardizing projections isolates shape so swd_loss remains near zero (< 0.10).
+    # Hinge variance loss is satisfied (std >= 1.0 -> var_loss == 0.0).
+    ctx_tokens_scaled = (torch.randn(4, 150, 128) * 2.0).detach().requires_grad_(True)
+    res_scaled = loss_fn(preds, tgts, ctx_tokens_scaled)
+    assert res_scaled["swd_loss"].item() < 0.10
+    assert res_scaled["var_loss"].item() == 0.0
+    res_scaled["loss"].backward()
+    assert ctx_tokens_scaled.grad is not None
+
+    # 2. Collapsed-variance Gaussian tokens (std = 0.2):
+    # Shape is still normal (swd_loss < 0.10), but variance hinge triggers (1.0 - 0.2 = ~0.8 > 0.5)
+    ctx_tokens_collapsed = (torch.randn(4, 150, 128) * 0.2).detach().requires_grad_(True)
+    res_collapsed = loss_fn(preds, tgts, ctx_tokens_collapsed)
+    assert res_collapsed["swd_loss"].item() < 0.10
+    assert res_collapsed["var_loss"].item() > 0.5
+    res_collapsed["loss"].backward()
+    assert ctx_tokens_collapsed.grad is not None
+
+

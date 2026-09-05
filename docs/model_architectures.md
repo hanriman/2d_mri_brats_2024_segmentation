@@ -206,8 +206,8 @@ $$\mathcal{L}_{\text{deep\_sup}} = \sum_{s=0}^3 w_s \cdot \mathcal{L}_{\text{Dic
 | Model Architecture | Parameter Count | Training Speed | Inference Latency | Primary Loss Function |
 | :--- | :--- | :--- | :--- | :--- |
 | **UNet Baseline** | $1.86\text{ M}$ | $46.30\text{ s/epoch}$ | $175.86\text{ ms/slice}$ | Combined Dice + BCE |
-| **nnU-Net Baseline (SOTA)** | $9.66\text{ M}$ | $34.68\text{ s/epoch}$ | $20.87\text{ ms/slice}$ | Deep Supervision Multi-Scale Loss |
-| **I-JEPA Encoder + Predictor** | $16.06\text{ M}$ | $26.96\text{ s/epoch}$ | $20.38\text{ ms/slice}$ | Latent Smooth L1 + EMA Teacher |
-| **SigReg JEPA Encoder** | $16.06\text{ M}$ | **$21.18\text{ s/epoch}$** | **$20.65\text{ ms/slice}$** | Latent Smooth L1 + SIGReg (Var/Cov) |
-| **VisReg JEPA Encoder** | $16.06\text{ M}$ | **$21.56\text{ s/epoch}$** | $20.71\text{ ms/slice}$ | Latent Smooth L1 + VISReg (Spatial Var) |
+| **nnU-Net Baseline (SOTA)** | $9.66\text{ M}$ | $34.68\text{ s/epoch}$ | $20.87\text{ ms/slice}$ | Unnormalized Deep Supervision ($\sum 2^{-s} \mathcal{L}_s$) |
+| **I-JEPA Encoder + Predictor** | $16.06\text{ M}$ | $26.96\text{ s/epoch}$ | $20.38\text{ ms/slice}$ | Latent Smooth L1 + Target LayerNorm + EMA Teacher |
+| **SigReg JEPA Encoder + Projector** | $16.58\text{ M}$ | **$21.18\text{ s/epoch}$** | **$20.65\text{ ms/slice}$** | Latent Smooth L1 + Epps–Pulley CF Test ($\mathcal{T}_{\text{EP}}$) |
+| **VisReg JEPA Encoder** | $16.06\text{ M}$ | **$21.56\text{ s/epoch}$** | $20.71\text{ ms/slice}$ | Latent Smooth L1 + Batch Var Hinge + Sliced-Wasserstein (SWD) |
 | **JEPASegmentationModel** | $14.67\text{ M}$ | $21.18\text{ s/epoch}$ | $20.52\text{ ms/slice}$ | Combined Dice + BCE |

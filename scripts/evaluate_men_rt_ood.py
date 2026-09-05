@@ -46,6 +46,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="BraTS-MEN-RT Cross-Pathology & Missing-Modality OOD Benchmark")
     parser.add_argument("--max_samples", type=int, default=1000, help="Maximum tumor slices for fast evaluation")
     parser.add_argument("--exp_version", type=str, default="v4_men_rt_ood", help="Experiment version directory tag")
+    parser.add_argument("--output_dir", type=str, default=None, help="Custom output base directory")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Directory containing model checkpoints")
     parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv manifest file")
     parser.add_argument("--device", type=str, default="auto", help="Device")
@@ -57,7 +58,11 @@ def main():
     set_seed(args.seed)
     device = get_device(args.device)
 
-    exp_dir = Path("outputs/experiments") / args.exp_version
+    if args.output_dir:
+        base_out = Path(args.output_dir).resolve()
+        exp_dir = base_out / "experiments" / args.exp_version if args.exp_version else base_out
+    else:
+        exp_dir = Path("outputs/experiments") / args.exp_version
     metrics_dir = exp_dir / "metrics"
     logs_dir = exp_dir / "logs"
     for d in [exp_dir, metrics_dir, logs_dir]:

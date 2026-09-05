@@ -64,7 +64,7 @@ class VisionTransformerEncoder2D(nn.Module):
             if patch_indices.dim() == 1:
                 tokens = tokens[:, patch_indices, :]
             else:
-                tokens = torch.stack([tokens[b, patch_indices[b], :] for b in range(B)], dim=0)
+                tokens = tokens.gather(1, patch_indices.unsqueeze(-1).expand(-1, -1, tokens.size(-1)))
                 
         out = self.blocks(tokens)
         out = self.norm(out)
@@ -118,12 +118,20 @@ class JEPAPredictor(nn.Module):
         
         # Add positional embedding to context tokens
         if context_indices.dim() == 1:
-            ctx_proj = ctx_proj + self.pos_embed[:, context_indices, :]
-            tgt_pos = self.pos_embed[:, target_indices, :]
+            ctx_pos = self.pos_embed[:, context_indices, :].expand(B, -1, -1)
         else:
-            ctx_pos = torch.stack([self.pos_embed[0, context_indices[b], :] for b in range(B)], dim=0)
-            ctx_proj = ctx_proj + ctx_pos
-            tgt_pos = torch.stack([self.pos_embed[0, target_indices[b], :] for b in range(B)], dim=0)
+            ctx_pos = self.pos_embed.expand(B, -1, -1).gather(
+                1, context_indices.unsqueeze(-1).expand(-1, -1, self.pos_embed.size(-1))
+            )
+        ctx_proj = ctx_proj + ctx_pos
+
+        # Compute positional embedding for target tokens
+        if target_indices.dim() == 1:
+            tgt_pos = self.pos_embed[:, target_indices, :].expand(B, -1, -1)
+        else:
+            tgt_pos = self.pos_embed.expand(B, -1, -1).gather(
+                1, target_indices.unsqueeze(-1).expand(-1, -1, self.pos_embed.size(-1))
+            )
             
         N_tgt = target_indices.shape[-1] if target_indices.dim() > 0 else len(target_indices)
         tgt_tokens = self.mask_token.expand(B, N_tgt, -1) + tgt_pos

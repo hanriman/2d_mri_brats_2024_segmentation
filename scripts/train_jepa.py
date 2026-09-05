@@ -14,7 +14,7 @@ from brats_jepa.config import (
     ensure_directories,
     get_metadata_path,
 )
-from brats_jepa.data import BraTS2DDataset, JEPAMaskingTransform
+from brats_jepa.data import BraTS2DDataset, JEPAMaskingTransform, RandomModalityDropout
 from brats_jepa.losses import IJEPALoss, SigRegLoss, VisRegLoss
 from brats_jepa.models import IJEPA, SigRegJEPA, VisRegJEPA
 from brats_jepa.utils import MetricTracker, get_device, get_logger, set_seed
@@ -27,6 +27,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=50, help="Number of pre-training epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--p_drop", type=float, default=0.0, help="Random modality dropout probability during training")
     parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv manifest file")
     parser.add_argument("--output_dir", type=str, default=None, help="Custom output directory for checkpoints and logs")
     parser.add_argument("--num_workers", type=int, default=DEFAULT_NUM_WORKERS,
@@ -115,7 +116,7 @@ def main():
         model = SigRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
         loss_fn = SigRegLoss(sigreg_weight=1.0, num_projections=256).to(device)
     elif args.model_type == "visreg_jepa":
-        model = VisRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384).to(device)
+        model = VisRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
         loss_fn = VisRegLoss(var_weight=1.0, swd_weight=1.0, num_projections=256).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -135,6 +136,7 @@ def main():
     metric_tracker = MetricTracker()
     best_val_loss = float("inf")
     start_total_time = time.perf_counter()
+    mod_drop = RandomModalityDropout(p_drop=args.p_drop)
 
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.perf_counter()
@@ -144,7 +146,7 @@ def main():
         for batch_idx, batch in enumerate(train_loader):
             if args.max_batches and batch_idx >= args.max_batches:
                 break
-            images = batch["image"].to(device, non_blocking=True)
+            images = mod_drop(batch["image"].to(device, non_blocking=True))
             ctx_idx = batch["context_indices"].to(device, non_blocking=True)
             tgt_idx_list = [t.to(device, non_blocking=True) for t in batch["target_indices"]]
 
@@ -157,7 +159,7 @@ def main():
                     loss_dict = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])
                     loss = loss_dict["loss"]
                 elif args.model_type == "visreg_jepa":
-                    loss_dict = loss_fn(outputs["predictions"], outputs["targets"], outputs["context_tokens"])
+                    loss_dict = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])
                     loss = loss_dict["loss"]
 
             if use_amp:
@@ -202,7 +204,7 @@ def main():
                     elif args.model_type == "sigreg_jepa":
                         loss = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])["loss"]
                     elif args.model_type == "visreg_jepa":
-                        loss = loss_fn(outputs["predictions"], outputs["targets"], outputs["context_tokens"])["loss"]
+                        loss = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])["loss"]
                 val_loss_sum += loss.item()
 
         n_val_batches = min(len(val_loader), args.max_batches) if args.max_batches else len(val_loader)

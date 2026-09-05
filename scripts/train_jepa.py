@@ -114,19 +114,19 @@ def main():
         loss_fn = IJEPALoss(loss_type="smooth_l1").to(device)
     elif args.model_type == "sigreg_jepa":
         model = SigRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
-        loss_fn = SigRegLoss(sigreg_weight=1.0, num_projections=256).to(device)
+        loss_fn = SigRegLoss(loss_type="smooth_l1", sigreg_weight=1.0, num_projections=256).to(device)
     elif args.model_type == "visreg_jepa":
         model = VisRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
-        loss_fn = VisRegLoss(var_weight=1.0, swd_weight=1.0, num_projections=256).to(device)
+        loss_fn = VisRegLoss(loss_type="smooth_l1", var_weight=1.0, swd_weight=1.0, num_projections=256).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     warmup_epochs = min(5, max(1, args.epochs // 5)) if args.epochs >= 5 else 0
     if warmup_epochs > 0:
         warmup_sched = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=warmup_epochs)
-        cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - warmup_epochs)
+        cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - warmup_epochs, eta_min=1e-6)
         scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_sched, cosine_sched], milestones=[warmup_epochs])
     else:
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
     use_amp = (device.type == "cuda") and args.amp
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)

@@ -199,7 +199,7 @@ If predictions $\hat{Y}_{\text{tgt}}$ were also normalized, the predictor could 
 \paragraph{Prediction Objective and Huber Loss Robustness}
 The prediction loss is computed using Smooth $L_1$ (Huber) loss between predicted tokens $\hat{Y}_{\text{tgt}}$ and normalized teacher tokens $\tilde{Y}_{\text{tgt}}$:
 \begin{equation}
-    \mathcal{L}_{\text{I-JEPA}}(\theta, \phi) = \frac{1}{B \cdot N_{\text{tgt}} \cdot D} \sum_{b=1}^B \sum_{i=1}^{N_{\text{tgt}}} \sum_{j=1}^D \text{Smooth}_{L_1}\left(\hat{Y}_{b, i, j} - \tilde{Y}_{b, i, j}\right)
+    \mathcal{L}_{\text{I-JEPA}}(\theta, \phi) = \frac{1}{K} \sum_{k=1}^K \frac{1}{B \cdot N_{\text{tgt}} \cdot D} \sum_{b=1}^B \sum_{i=1}^{N_{\text{tgt}}} \sum_{j=1}^D \text{Smooth}_{L_1}\left(\hat{Y}_{b, i, j}^{(k)} - \tilde{Y}_{b, i, j}^{(k)}\right)
 \end{equation}
 where Smooth $L_1$ transitions between quadratic and linear penalties:
 \begin{equation}
@@ -299,19 +299,19 @@ Scale regularization forces feature variance across the batch along each project
 When feature variance is at or above $1.0$, this hinge loss evaluates to identically zero, allowing representations to expand without penalty.
 
 \paragraph{Shape Regularization via Standardized Projections}
-$M = 256$ random projection vectors $u_m$ are sampled uniformly from the unit hypersphere: $u \sim \mathcal{N}(0, \mathbf{I}_{d_p}), u_m = u / \|u\|_2 \in \mathbb{S}^{d_p - 1}$. 1D slices are formed by matrix multiplication: $p_m = Z_{\text{proj}} u_m \in \mathbb{R}^K$ ($K = B \cdot N_{\text{ctx}}$).
+$M = 256$ random projection vectors $u_m$ are sampled uniformly from the unit hypersphere: $u \sim \mathcal{N}(0, \mathbf{I}_{d_p}), u_m = u / \|u\|_2 \in \mathbb{S}^{d_p - 1}$. 1D slices are formed by matrix multiplication: $p_m = Z_{\text{proj}} u_m \in \mathbb{R}^N$ ($N = B \cdot N_{\text{ctx}}$).
 
 To strictly isolate the \emph{shape} of the distribution from variance and mean shifts, we standardize each 1D projected slice prior to quantile sorting:
 \begin{equation}
-    \tilde{p}_{im} = \frac{p_{im} - \mu_m}{\sigma_m + \epsilon}, \qquad \mu_m = \frac{1}{K} \sum_{i=1}^K p_{im}, \quad \sigma_m = \sqrt{\frac{1}{K} \sum_{i=1}^K (p_{im} - \mu_m)^2 + \epsilon}
+    \tilde{p}_{im} = \frac{p_{im} - \mu_m}{\sigma_m + \epsilon}, \qquad \mu_m = \frac{1}{N} \sum_{i=1}^N p_{im}, \quad \sigma_m = \sqrt{\frac{1}{N} \sum_{i=1}^N (p_{im} - \mu_m)^2 + \epsilon}
 \end{equation}
 Sorting the standardized projections $\tilde{p}_{(\cdot) m}$ yields empirical quantiles. The Sliced-Wasserstein Distance against standard normal $\mathcal{N}(0, 1)$ quantiles has an exact closed-form solution:
 \begin{equation}
-    \mathcal{L}_{\text{SWD}}(Z_{\text{proj}}) = \frac{1}{M} \sum_{m=1}^M \frac{1}{K} \sum_{i=1}^K \left| \tilde{p}_{(i) m} - \Phi^{-1}\left(\frac{i - 0.5}{K}\right) \right|
+    \mathcal{L}_{\text{SWD}}(Z_{\text{proj}}) = \frac{1}{M} \sum_{m=1}^M \frac{1}{N} \sum_{i=1}^N \left| \tilde{p}_{(i) m} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right) \right|
 \end{equation}
 where the target analytical quantiles are evaluated using the inverse error function:
 \begin{equation}
-    \Phi^{-1}\left(\frac{i - 0.5}{K}\right) = \sqrt{2} \cdot \text{erf}^{-1}\left(2 \left(\frac{i - 0.5}{K}\right) - 1.0\right)
+    \Phi^{-1}\left(\frac{i - 0.5}{N}\right) = \sqrt{2} \cdot \text{erf}^{-1}\left(2 \left(\frac{i - 0.5}{N}\right) - 1.0\right)
 \end{equation}
 
 \paragraph{Theoretical Explanation of Effective Rank Behavior (Table~\ref{tab:benchmark_results_ext})}
@@ -379,7 +379,7 @@ Let $\hat{Y} \in \mathbb{R}^{H \times W}$ denote continuous segmentation logits,
 \paragraph{Combined Dice + BCE Objective}
 In 2D brain MRI slices, tumor lesions occupy on average $< 2\%$ of spatial pixels, and $46.3\%$ of slices contain zero tumor voxels (non-tumor brain tissue). Standard Binary Cross-Entropy (BCE) is dominated by true background pixels, driving models toward degenerate all-zero predictions. We optimize a combined Soft Dice + BCE loss \citep{milletari2016vnet,isensee2021nnunet}:
 \begin{equation}
-    \mathcal{L}_{\text{Dice}}(\hat{Y}, Y) = 1.0 - \frac{2 \sum_{i} \sigma(\hat{Y}_i) Y_i + \epsilon}{\sum_{i} \sigma(\hat{Y}_i)^2 + \sum_{i} Y_i^2 + \epsilon}
+    \mathcal{L}_{\text{Dice}}(\hat{Y}, Y) = 1.0 - \frac{2 \sum_{i} \sigma(\hat{Y}_i) Y_i + \epsilon}{\sum_{i} \sigma(\hat{Y}_i) + \sum_{i} Y_i + \epsilon}
 \end{equation}
 \begin{equation}
     \mathcal{L}_{\text{BCE}}(\hat{Y}, Y) = - \frac{1}{N_{\text{vox}}} \sum_{i=1}^{N_{\text{vox}}} \left[ Y_i \ln \sigma(\hat{Y}_i) + (1 - Y_i) \ln(1 - \sigma(\hat{Y}_i)) \right]
@@ -454,14 +454,14 @@ $S_{\text{cosine}} \to 0.0$ reflects orthogonal, linearly independent patch toke
 \section{Training and Optimization Protocols}
 
 \subsection{Dataset Split and Deterministic Seeding}
-Experiments are conducted on the official 2D preprocessed BraTS Glioma dataset (\texttt{BraTS GLI}), comprising $6,330$ training slices ($1,134$ patient volumes), $904$ validation slices ($162$ volumes), and $1,810$ test slices ($325$ volumes). All random number generators (PyTorch CPU, PyTorch MPS/CUDA, NumPy, Python `random`) are fixed with seed $42$. Slices are partitioned strictly at the **patient volume level** to guarantee zero patient leakage across splits.
+Experiments are conducted on the official 2D preprocessed BraTS Glioma dataset (\texttt{BraTS GLI}), comprising $6,330$ training slices ($1,266$ patient volumes), $905$ validation slices ($181$ volumes), and $1,810$ test slices ($362$ volumes). All random number generators (PyTorch CPU, PyTorch MPS/CUDA, NumPy, Python \texttt{random}) are fixed with seed $42$. Slices are partitioned strictly at the \textbf{patient volume level} to guarantee zero patient leakage across splits.
 
 \subsection{Optimization Protocols \& Low-Data Stabilization}
 
 \paragraph{Pre-Training Phase (50 Epochs)}
 \begin{itemize}
     \item Optimizer: AdamW ($\beta_1 = 0.9, \beta_2 = 0.999$, weight decay $10^{-4}$).
-    \item Learning rate schedule: Base $\text{lr} = 10^{-4}$ decayed via Cosine Annealing to $\eta_{\text{min}} = 10^{-6}$.
+    \item Learning rate schedule: 5-epoch linear warmup ($0.1 \times \text{lr} \to \text{lr}$) followed by Cosine Annealing decay to $\eta_{\text{min}} = 10^{-6}$.
     \item Gradient clipping: Global gradient norm is clipped at $\tau = 1.0$ at every iteration to ensure numerical stability.
     \item Batch size: $8$ slices per batch (effectively $8 \times 96 = 768$ context tokens per step).
 \end{itemize}
@@ -469,7 +469,7 @@ Experiments are conducted on the official 2D preprocessed BraTS Glioma dataset (
 \paragraph{Downstream Fine-Tuning Phase (30 Epochs)}
 \begin{itemize}
     \item Optimizer: AdamW ($\text{lr} = 10^{-4}$, weight decay $10^{-4}$).
-    \item Scheduler: Cosine Annealing learning rate schedule decaying to $10^{-6}$.
+    \item Scheduler: Cosine Annealing learning rate schedule decaying to $\eta_{\text{min}} = 10^{-6}$.
     \item Gradient clipping: Global gradient norm clipped at $1.0$ to prevent divergence under extreme data scarcity ($1\%$ labels).
     \item Augmentations: Random Horizontal Flip ($p=0.5$), Random Vertical Flip ($p=0.5$), Random Rotation ($\pm 17.2^\circ, p=0.5$), Random Modality Dropout ($p_{\text{drop}} = 0.25$).
 \end{itemize}
@@ -530,7 +530,7 @@ Table~\ref{tab:low_data_results_ext} reports fine-tuning accuracy across 6 label
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{lcccccc}
 \toprule
-\textbf{Model Architecture} & \textbf{1\% Labels (63 Slices)} & \textbf{5\% Labels (316 Slices)} & \textbf{10\% Labels (633 Slices)} & \textbf{25\% Labels (1.5k Slices)} & \textbf{50\% Labels (3.1k Slices)} & \textbf{100\% Labels (6.3k Slices)} \\
+\textbf{Model Architecture} & \textbf{1\% Labels (63 Slices)} & \textbf{5\% Labels (316 Slices)} & \textbf{10\% Labels (633 Slices)} & \textbf{25\% Labels (1,582 Slices)} & \textbf{50\% Labels (3,165 Slices)} & \textbf{100\% Labels (6,330 Slices)} \\
 \midrule
 \textbf{UNet Baseline} & 0.0421 & 0.3945 & 0.4648 & 0.4321 & 0.8348 & \textbf{0.8620} \\
 \textbf{nnU-Net Baseline (SOTA)} & 0.3847 & \textbf{0.7335} & \textbf{0.8017} & \textbf{0.8362} & \textbf{0.8778} & 0.8536 \\
@@ -580,11 +580,11 @@ Bias Field (Coil Shift) & I-JEPA (Fine-tuned) & 0.4488 & 0.3949 & 162.91 \\
 
 \subsection{Cross-Pathology \& Missing-Modality OOD Benchmark Results (\texttt{BraTS-MEN-RT})}
 
-Table~\ref{tab:men_rt_results_ext} evaluates zero-shot transfer on Extra-axial Meningioma MRI (\texttt{BraTS-MEN-RT}) providing only a single T1c sequence. Under zero-padded missing channels ($[0, \text{T1c}, 0, 0]$), standard \textbf{UNet completely collapses ($0.0151$ Dice)}, whereas \textbf{VisReg JEPA} achieves top transfer Dice (\textbf{0.0929}), and \textbf{SigReg JEPA} achieves the sharpest boundary distance (\textbf{86.47 px} HD95).
+Table~\ref{tab:men_rt_results_ext} evaluates zero-shot transfer on Extra-axial Meningioma MRI (\texttt{BraTS-MEN-RT}) providing only a single T1c sequence evaluated across $N=1,000$ tumor-bearing slices (strictly evaluating tumor-containing slices, where empty-slice true-negatives cannot artificially inflate Dice scores). Under zero-padded missing channels ($[0, \text{T1c}, 0, 0]$), standard \textbf{UNet completely collapses ($0.0151$ Dice)}, whereas \textbf{VisReg JEPA} achieves top transfer Dice (\textbf{0.0929}), and \textbf{SigReg JEPA} achieves the sharpest boundary distance (\textbf{86.47 px} HD95).
 
 \begin{table}[ht]
 \centering
-\caption{Zero-Shot Cross-Pathology \& Missing-Modality OOD evaluation on BraTS-MEN-RT Meningioma MRI. Best per adaptation strategy is formatted in \textbf{bold}.}
+\caption{Zero-Shot Cross-Pathology \& Missing-Modality OOD evaluation on $N=1,000$ tumor-bearing slices from BraTS-MEN-RT Meningioma MRI. Best per adaptation strategy is formatted in \textbf{bold}.}
 \label{tab:men_rt_results_ext}
 \vspace{0.5em}
 \resizebox{\textwidth}{!}{%

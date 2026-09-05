@@ -48,7 +48,7 @@ class VisRegLoss(nn.Module):
     """
     def __init__(
         self,
-        loss_type: str = "l1",
+        loss_type: str = "smooth_l1",
         var_weight: float = 1.0,
         swd_weight: float = 1.0,
         num_projections: int = 256,

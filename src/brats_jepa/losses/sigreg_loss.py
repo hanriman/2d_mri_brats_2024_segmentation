@@ -111,7 +111,7 @@ class SigRegLoss(nn.Module):
     """
     def __init__(
         self,
-        loss_type: str = "l1",
+        loss_type: str = "smooth_l1",
         sigreg_weight: float = 1.0,
         num_projections: int = 256,
         t_max: float = 3.0,

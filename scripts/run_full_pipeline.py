@@ -90,11 +90,12 @@ def main():
     run_cmd([sys.executable, "scripts/generate_figures.py"])
     if not args.skip_latex:
         paper_dir = Path("paper/latex").resolve()
+        tex_target = "extended_main" if (paper_dir / "extended_main.tex").exists() else "main"
         try:
-            run_cmd(["pdflatex", "-interaction=nonstopmode", "main.tex"], cwd=paper_dir)
-            run_cmd(["bibtex", "main"], cwd=paper_dir)
-            run_cmd(["pdflatex", "-interaction=nonstopmode", "main.tex"], cwd=paper_dir)
-            run_cmd(["pdflatex", "-interaction=nonstopmode", "main.tex"], cwd=paper_dir)
+            run_cmd(["pdflatex", "-interaction=nonstopmode", f"{tex_target}.tex"], cwd=paper_dir)
+            run_cmd(["bibtex", tex_target], cwd=paper_dir)
+            run_cmd(["pdflatex", "-interaction=nonstopmode", f"{tex_target}.tex"], cwd=paper_dir)
+            run_cmd(["pdflatex", "-interaction=nonstopmode", f"{tex_target}.tex"], cwd=paper_dir)
         except Exception as e:
             print(f"LaTeX compilation skipped or failed: {e}")
     else:

@@ -122,7 +122,7 @@ def main():
 
     loss_fn = CombinedDiceBCELoss(dice_weight=1.0, bce_weight=1.0)
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
     use_amp = (device.type == "cuda") and args.amp
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)

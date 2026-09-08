@@ -26,7 +26,7 @@ def print_step(title: str):
 def run_cmd(cmd: list[str]):
     print(f"[CMD]: {' '.join(cmd)}")
     t0 = time.perf_counter()
-    res = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+    res = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
     duration = time.perf_counter() - t0
     if res.returncode != 0:
         print(f"\n❌ FAILED in {duration:.2f}s:\n{res.stderr}")

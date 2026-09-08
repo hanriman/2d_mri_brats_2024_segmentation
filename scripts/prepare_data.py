@@ -115,7 +115,7 @@ def main():
     print(f"Sampling target: {args.slices_per_patient} slices per 3D volume")
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    t1n_files = sorted(list(data_dir.rglob("*-t1n.nii.gz")))
+    t1n_files = sorted(data_dir.rglob("*-t1n.nii.gz"))
     if args.limit:
         t1n_files = t1n_files[:args.limit]
         print(f"Limiting preprocessing to first {args.limit} cases.")
@@ -126,30 +126,30 @@ def main():
 
     print(f"Found {len(t1n_files)} patient volumes. Analyzing tumor volumes and sampling slices...")
     patient_records = []
-    
+
     for t1n_path in tqdm(t1n_files, desc="Analyzing BraTS-GLI volumes"):
         p_dir = t1n_path.parent
         patient_id = p_dir.name
-        
+
         seg_paths = list(p_dir.glob("*-seg.nii.gz"))
         t1c_paths = list(p_dir.glob("*-t1c.nii.gz"))
         t2w_paths = list(p_dir.glob("*-t2w.nii.gz"))
         t2f_paths = list(p_dir.glob("*-t2f.nii.gz"))
-        
+
         if not (t1c_paths and t2w_paths and t2f_paths):
             continue
-            
+
         try:
             t1n_3d = nib.load(str(t1n_path)).get_fdata().astype(np.float32)
             t1c_3d = nib.load(str(t1c_paths[0])).get_fdata().astype(np.float32)
             t2w_3d = nib.load(str(t2w_paths[0])).get_fdata().astype(np.float32)
             t2f_3d = nib.load(str(t2f_paths[0])).get_fdata().astype(np.float32)
-            
+
             if seg_paths:
                 seg_3d = nib.load(str(seg_paths[0])).get_fdata().astype(np.float32)
             else:
                 seg_3d = np.zeros_like(t1n_3d)
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError) as e:
             print(f"Error loading {patient_id}: {e}")
             continue
 

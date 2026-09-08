@@ -140,8 +140,8 @@ class SigRegLoss(nn.Module):
             
         # Flatten tokens across batch and patch dimensions: [N, D]
         z = reg_tokens.reshape(-1, reg_tokens.shape[-1])
-        N, D = z.shape
-        
+        _N, D = z.shape
+
         # Sample M random projection directions on unit hypersphere
         A = torch.randn(D, self.num_projections, device=z.device, dtype=z.dtype)
         A = F.normalize(A, p=2, dim=0)  # [D, M]

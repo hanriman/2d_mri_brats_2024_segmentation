@@ -105,6 +105,7 @@ def package_code(output_zip: Path):
             "matplotlib>=3.8.0\n"
             "scipy>=1.11.0\n"
             "nibabel>=5.0.0\n"
+            "pytest>=8.0.0\n"
         )
         zf.writestr("requirements.txt", requirements_content)
         file_count += 1

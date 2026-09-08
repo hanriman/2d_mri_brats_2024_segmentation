@@ -99,30 +99,28 @@ def main():
     logger.info(f"Sampling target: {args.slices_per_patient} slices per 3D volume")
     
     # Find all patient directories containing *_t1c.nii.gz
-    t1c_files = sorted(list(raw_dir.rglob("*_t1c.nii.gz")))
+    t1c_files = sorted(raw_dir.rglob("*_t1c.nii.gz"))
     logger.info(f"Found {len(t1c_files)} t1c NIfTI volumes.")
-    
-    records = []
+
     global_slice_idx = 0
-    
-    for t1c_path in tqdm(t1c_files, desc="Processing BraTS-MEN-RT volumes"):
-        patient_dir = t1c_path.parent
-        patient_id = patient_dir.name
-        
-        # Look for corresponding ground-truth mask (*_gtv.nii.gz or *_seg.nii.gz)
-        gtv_candidates = list(patient_dir.glob("*_gtv.nii.gz")) + list(patient_dir.glob("*_seg.nii.gz"))
-        has_gtv = len(gtv_candidates) > 0
-        
+    records = []
+
+    for t1c_path in tqdm(t1c_files, desc="Processing BraTS-MEN-RT"):
+        patient_id = t1c_path.name.replace("_t1c.nii.gz", "")
+
         try:
-            t1c_nifti = nib.load(str(t1c_path))
-            t1c_vol = t1c_nifti.get_fdata()
-            
+            t1c_img = nib.load(t1c_path)
+            t1c_vol = np.asarray(t1c_img.dataobj, dtype=np.float32)
+
+            gtv_path = t1c_path.parent / f"{patient_id}_gtv.nii.gz"
+            has_gtv = gtv_path.exists()
+
             if has_gtv:
-                gtv_nifti = nib.load(str(gtv_candidates[0]))
-                gtv_vol = gtv_nifti.get_fdata()
+                gtv_img = nib.load(gtv_path)
+                gtv_vol = np.asarray(gtv_img.dataobj, dtype=np.float32)
             else:
                 gtv_vol = np.zeros_like(t1c_vol)
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError) as e:
             logger.warning(f"Error loading {patient_id}: {e}")
             continue
             

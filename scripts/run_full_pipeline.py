@@ -6,7 +6,7 @@ import argparse
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -28,12 +28,16 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default=None, help="Output root directory")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Pre-trained checkpoint directory")
     parser.add_argument("--p_drop", type=float, default=0.25, help="Random modality dropout probability during training")
+    parser.add_argument("--decoder_type", type=str, choices=["bottleneck", "multiscale"], default="bottleneck",
+                        help="Downstream decoder architecture: standard bottleneck or hierarchical multiscale feature pyramid")
+    parser.add_argument("--encoder_source", type=str, choices=["target", "context"], default="target",
+                        help="Source encoder weights to load: target (EMA teacher) or context (online student)")
     parser.add_argument("--skip_latex", action="store_true", help="Skip LaTeX compilation")
     return parser.parse_args()
 
 def main():
     args = parse_args()
-    start_wall_time = datetime.now()
+    start_wall_time = datetime.now(UTC).astimezone()
     start_all = time.perf_counter()
     tag = args.tag
     
@@ -59,6 +63,11 @@ def main():
     if args.checkpoint_dir:
         ckpt_flags.extend(["--checkpoint_dir", args.checkpoint_dir])
 
+    downstream_flags = list(train_flags) + list(ckpt_flags) + [
+        "--decoder_type", args.decoder_type,
+        "--encoder_source", args.encoder_source,
+    ]
+
     if args.mode in ["all", "full_data"]:
         print("\n" + "="*80)
         print("PHASE 1: FULL-DATA BENCHMARK (100% Labels, 50-Epoch SSL / 30-Epoch Baseline)")
@@ -68,16 +77,16 @@ def main():
         run_cmd([sys.executable, "scripts/train_jepa.py", "--model_type", "visreg_jepa", "--epochs", "50", "--batch_size", "8"] + train_flags)
         run_cmd([sys.executable, "scripts/train_unet.py", "--epochs", "30", "--batch_size", "8"] + train_flags)
         run_cmd([sys.executable, "scripts/train_nnunet.py", "--epochs", "30", "--batch_size", "8"] + train_flags)
-        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "ijepa", "--epochs", "30", "--batch_size", "8"] + train_flags + ckpt_flags)
-        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "sigreg_jepa", "--epochs", "30", "--batch_size", "8"] + train_flags + ckpt_flags)
-        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "visreg_jepa", "--epochs", "30", "--batch_size", "8"] + train_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "ijepa", "--epochs", "30", "--batch_size", "8"] + downstream_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "sigreg_jepa", "--epochs", "30", "--batch_size", "8"] + downstream_flags)
+        run_cmd([sys.executable, "scripts/train_downstream.py", "--model_type", "visreg_jepa", "--epochs", "30", "--batch_size", "8"] + downstream_flags)
         run_cmd([sys.executable, "scripts/evaluate.py"] + ([f for f in base_flags if f != "--amp"]) + ckpt_flags)
 
     if args.mode in ["all", "low_data"]:
         print("\n" + "="*80)
         print(f"PHASE 2: LOW-DATA LABEL EFFICIENCY BENCHMARK ({low_data_version})")
         print("="*80)
-        run_cmd([sys.executable, "scripts/evaluate_low_data.py", "--epochs", "30", "--exp_version", low_data_version] + base_flags + ckpt_flags)
+        run_cmd([sys.executable, "scripts/evaluate_low_data.py", "--epochs", "30", "--exp_version", low_data_version, "--decoder_type", args.decoder_type, "--encoder_source", args.encoder_source] + base_flags + ckpt_flags)
 
     if args.mode in ["all", "ood"]:
         print("\n" + "="*80)
@@ -96,12 +105,12 @@ def main():
             run_cmd(["bibtex", tex_target], cwd=paper_dir)
             run_cmd(["pdflatex", "-interaction=nonstopmode", f"{tex_target}.tex"], cwd=paper_dir)
             run_cmd(["pdflatex", "-interaction=nonstopmode", f"{tex_target}.tex"], cwd=paper_dir)
-        except Exception as e:
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
             print(f"LaTeX compilation skipped or failed: {e}")
     else:
         print("Skipping LaTeX compilation (--skip_latex requested).")
-    
-    end_wall_time = datetime.now()
+
+    end_wall_time = datetime.now(UTC).astimezone()
     total_sec = time.perf_counter() - start_all
     
     print("\n" + "="*85)

@@ -63,7 +63,7 @@ class RandomModalityDropout(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if not self.training or self.p_drop <= 0.0:
             return x
-        B, C, H, W = x.shape
+        B, C, _H, _W = x.shape
         mask = (torch.rand(B, C, 1, 1, device=x.device) > self.p_drop).float()
         all_zero = (mask.sum(dim=1, keepdim=True) == 0)
         # Fallback: activate a random channel for any slice where all modalities were dropped

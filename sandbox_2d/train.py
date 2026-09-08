@@ -120,7 +120,7 @@ def main():
                         d_loss = dice_loss_fn(logits, labels)
                         b_loss = bce_loss_fn(logits, labels)
                         loss = d_loss + b_loss
-                except Exception:
+                except (RuntimeError, ValueError):
                     # Fallback to standard precision if autocast errors
                     logits = model(images)
                     d_loss = dice_loss_fn(logits, labels)

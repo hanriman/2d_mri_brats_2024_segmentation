@@ -13,3 +13,5 @@ num_context_patches: 96
 num_target_masks: 4
 sigreg_weight: 1.0
 num_projections: 256
+normalize_measure: true
+

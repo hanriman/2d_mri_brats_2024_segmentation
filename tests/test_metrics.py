@@ -252,3 +252,54 @@ def test_hd95_anisotropic_voxel_spacing():
     assert abs(hd_aniso - 10.0) < 1e-4
 
 
+def test_representation_collapse_metrics_isotropic():
+    """Verify that isotropic representations yield high rank and near-zero cosine similarity."""
+    from brats_jepa.metrics.probing_metrics import compute_representation_collapse_metrics, compute_effective_rank
+
+    torch.manual_seed(42)
+    # 200 tokens of dimension 64 sampled from standard normal
+    z = torch.randn(200, 64)
+    metrics = compute_representation_collapse_metrics(z)
+
+    assert metrics["effective_rank"] > 40.0
+    assert abs(metrics["avg_cosine_sim"]) < 0.1
+    assert abs(metrics["avg_cosine_sim_centered"]) < 0.1
+    assert abs(metrics["feature_variance"] - 1.0) < 0.2
+
+
+def test_representation_collapse_metrics_offset_centroid():
+    """Verify that a large centroid shift inflates uncentered cosine sim but preserves near-zero centered sim."""
+    from brats_jepa.metrics.probing_metrics import compute_representation_collapse_metrics
+
+    torch.manual_seed(42)
+    # High-rank features with large non-zero mean
+    z = torch.randn(200, 64) + 10.0
+    metrics = compute_representation_collapse_metrics(z)
+
+    # Effective rank remains high (covariance is unaffected by constant shift)
+    assert metrics["effective_rank"] > 40.0
+    # Uncentered cosine similarity is dominated by the offset (approaches 1.0)
+    assert metrics["avg_cosine_sim"] > 0.9
+    # Centered cosine similarity strips the centroid and correctly measures high dispersion (~0.0)
+    assert abs(metrics["avg_cosine_sim_centered"]) < 0.1
+
+
+def test_representation_collapse_metrics_edge_cases():
+    """Verify boundary cases: single token and completely collapsed identical tokens."""
+    from brats_jepa.metrics.probing_metrics import compute_representation_collapse_metrics
+
+    # Single token
+    z_single = torch.randn(1, 32)
+    m_single = compute_representation_collapse_metrics(z_single)
+    assert m_single["avg_cosine_sim"] == 1.0
+    assert m_single["avg_cosine_sim_centered"] == 0.0
+
+    # Completely collapsed identical tokens
+    z_collapsed = torch.ones(50, 32)
+    m_collapsed = compute_representation_collapse_metrics(z_collapsed)
+    assert abs(m_collapsed["avg_cosine_sim"] - 1.0) < 1e-5
+    assert m_collapsed["effective_rank"] <= 1.05
+    assert m_collapsed["feature_variance"] < 1e-6
+
+
+

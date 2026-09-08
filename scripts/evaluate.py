@@ -175,12 +175,11 @@ def main():
         torch.backends.cudnn.benchmark = True
 
     # Resolve output and checkpoint directories
+    root_out = Path(args.output_dir).resolve() if args.output_dir else OUTPUTS_DIR
     if args.exp_version:
-        base_out = Path("outputs/experiments") / args.exp_version
-    elif args.output_dir:
-        base_out = Path(args.output_dir).resolve()
+        base_out = root_out / "experiments" / args.exp_version
     else:
-        base_out = OUTPUTS_DIR
+        base_out = root_out
 
     ckpt_dir = Path(args.checkpoint_dir).resolve() if args.checkpoint_dir else (base_out / "checkpoints" if args.exp_version else CHECKPOINTS_DIR)
     metrics_dir = base_out / "metrics"
@@ -290,6 +289,7 @@ def main():
             "patient_3d_hd95_px": f"{m_dict['patient_3d_hd95_px']:.2f}" if not np.isnan(m_dict['patient_3d_hd95_px']) else "N/A",
             "effective_rank": "N/A (CNN)",
             "avg_cosine_sim": "N/A",
+            "avg_cosine_sim_centered": "N/A",
             "infer_ms_per_slice": f"{m_dict['ms_per_slice']:.2f} ms",
             "train_sec_per_epoch": sec_per_epoch,
         })
@@ -310,7 +310,7 @@ def main():
         if not ssl_ckpt.exists():
             ssl_ckpt = CHECKPOINTS_DIR / f"best_{type_name}.pt"
 
-        eff_rank_str, cosine_sim_str = "N/A", "N/A"
+        eff_rank_str, cosine_sim_str, cosine_sim_centered_str = "N/A", "N/A", "N/A"
         if ssl_ckpt.exists():
             ssl_model = ssl_model_cls(img_size=240, patch_size=16, in_channels=4, embed_dim=384).to(device)
             ckpt = torch.load(ssl_ckpt, map_location=device)
@@ -339,6 +339,7 @@ def main():
                 rep_metrics = compute_representation_collapse_metrics(cat_tokens)
                 eff_rank_str = f"{rep_metrics['effective_rank']:.2f}"
                 cosine_sim_str = f"{rep_metrics['avg_cosine_sim']:.4f}"
+                cosine_sim_centered_str = f"{rep_metrics['avg_cosine_sim_centered']:.4f}"
 
         if finetuned_ckpt.exists():
             logger.info(f"Evaluating fine-tuned downstream segmentation for {name} from {finetuned_ckpt.name}...")
@@ -379,6 +380,7 @@ def main():
                 "patient_3d_hd95_px": f"{m_dict['patient_3d_hd95_px']:.2f}" if not np.isnan(m_dict['patient_3d_hd95_px']) else "N/A",
                 "effective_rank": eff_rank_str,
                 "avg_cosine_sim": cosine_sim_str,
+                "avg_cosine_sim_centered": cosine_sim_centered_str,
                 "infer_ms_per_slice": f"{m_dict['ms_per_slice']:.2f} ms",
                 "train_sec_per_epoch": sec_per_epoch,
             })

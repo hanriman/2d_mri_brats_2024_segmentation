@@ -118,14 +118,14 @@ The notebook is divided into clear, modular sections:
 
 #### Section 7: Downstream Segmentation Fine-Tuning (30 Epochs, AMP)
 ```bash
-!python scripts/train_downstream.py --model_type ijepa --epochs 30 --batch_size 32 --num_workers 2 --amp
-!python scripts/train_downstream.py --model_type sigreg_jepa --epochs 30 --batch_size 32 --num_workers 2 --amp
-!python scripts/train_downstream.py --model_type visreg_jepa --epochs 30 --batch_size 32 --num_workers 2 --amp
+!python scripts/train_downstream.py --model_type ijepa --epochs 30 --batch_size 32 --num_workers 2 --amp --p_drop 0.25 --decoder_type multiscale --encoder_source target
+!python scripts/train_downstream.py --model_type sigreg_jepa --epochs 30 --batch_size 32 --num_workers 2 --amp --p_drop 0.25 --decoder_type multiscale --encoder_source context
+!python scripts/train_downstream.py --model_type visreg_jepa --epochs 30 --batch_size 32 --num_workers 2 --amp --p_drop 0.25 --decoder_type multiscale --encoder_source context
 ```
 
 #### Section 8: Test Evaluation & Probing
 ```bash
-!python scripts/evaluate.py --batch_size 32 --num_workers 2
+!python scripts/evaluate.py --batch_size 32 --num_workers 2 --amp --decoder_type multiscale
 ```
 Computes Test Dice, IoU, HD95, Linear Probing Accuracy, Effective Rank, and Cosine Similarity across all models.
 
@@ -137,8 +137,8 @@ Computes Test Dice, IoU, HD95, Linear Probing Accuracy, Effective Rank, and Cosi
 
 #### Section 10: Out-of-Distribution (OOD) Benchmarks
 ```bash
-!python scripts/evaluate_ood.py --exp_version kaggle_ood
-!python scripts/evaluate_men_rt_ood.py --max_samples 5000 --exp_version kaggle_men_rt_ood
+!python scripts/evaluate_ood.py --batch_size 32 --num_workers 2 --amp --exp_version kaggle_ood
+!python scripts/evaluate_men_rt_ood.py --max_samples 5000 --batch_size 32 --num_workers 2 --amp --exp_version kaggle_men_rt_ood
 ```
 
 #### Section 11 & 12: Figure Generation & 1-Click Download
@@ -169,8 +169,8 @@ Since every execution cell executes `!python scripts/...` via a subprocess, upda
    ```
 4. Re-compile the LaTeX manuscript with the new empirical results:
    ```bash
-   cd paper/latex
-   pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
+    cd paper/latex
+    pdflatex extended_main.tex && bibtex extended_main && pdflatex extended_main.tex && pdflatex extended_main.tex
    ```
 
 ---

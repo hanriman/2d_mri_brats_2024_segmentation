@@ -62,7 +62,7 @@ ai-research-project/
 │
 ├── paper/                     # Manuscript source code & submission artifacts
 │   ├── latex/                 # Tracked LaTeX source files (.tex, .bib, style files)
-│   │   ├── main.tex           # NeurIPS 2026 Camera-Ready LaTeX source
+│   │   ├── extended_main.tex  # NeurIPS 2026 Camera-Ready LaTeX source
 │   │   ├── references.bib     # BibTeX citations
 │   │   └── neurips_2026.sty   # NeurIPS 2026 LaTeX style package
 │   └── submission_plan.md    # Target journals/conferences & review checklists

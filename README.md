@@ -86,8 +86,8 @@ thesis_2d/
 │
 ├── paper/                     # LaTeX manuscript source (NeurIPS 2026 style)
 │   └── latex/
-│       ├── main.pdf           # Compiled NeurIPS 2026 PDF Paper
-│       ├── main.tex           # LaTeX document source
+│       ├── extended_main.pdf  # Compiled NeurIPS 2026 PDF Paper
+│       ├── extended_main.tex  # LaTeX document source
 │       ├── references.bib     # BibTeX references (I-JEPA, SIGReg, VISReg, UNet, nnU-Net, BraTS 2024)
 │       └── neurips_2026.sty   # NeurIPS 2026 LaTeX style package
 │
@@ -168,7 +168,7 @@ uv run python scripts/evaluate_ood.py --exp_version v3_ood_generalization
 uv run python scripts/generate_figures.py
 
 # Compile NeurIPS 2026 LaTeX paper
-cd paper/latex && pdflatex main.tex && bibtex main && pdflatex main.tex
+cd paper/latex && pdflatex extended_main.tex && bibtex extended_main && pdflatex extended_main.tex
 ```
 
 ---

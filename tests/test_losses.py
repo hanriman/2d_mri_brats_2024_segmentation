@@ -67,6 +67,34 @@ def test_epps_pulley_gaussianity():
     assert stat_gauss.item() >= 0.0
     assert stat_collapsed.item() > stat_gauss.item()
 
+def test_sigreg_normalize_measure_scaling():
+    """Verify that normalize_measure=False produces exact sqrt(2*pi) unnormalized LeJEPA scaling."""
+    import math
+    from brats_jepa.losses.sigreg_loss import EppsPulleyGaussianityTest, SigRegLoss
+
+    test_norm = EppsPulleyGaussianityTest(normalize_measure=True)
+    test_unnorm = EppsPulleyGaussianityTest(normalize_measure=False)
+
+    torch.manual_seed(42)
+    x = torch.randn(500, 16)
+    stat_norm = test_norm(x)
+    stat_unnorm = test_unnorm(x)
+
+    ratio = stat_unnorm / stat_norm
+    expected_ratio = math.sqrt(2.0 * math.pi)
+    assert abs(ratio.item() - expected_ratio) < 1e-4
+
+    # Test SigRegLoss with normalize_measure=False
+    loss_unnorm = SigRegLoss(normalize_measure=False)
+    preds = [torch.randn(2, 10, 64, requires_grad=True)]
+    tgts = [torch.randn(2, 10, 64)]
+    ctx = torch.randn(2, 50, 64, requires_grad=True)
+    out = loss_unnorm(preds, tgts, ctx)
+    assert out["loss"] > 0.0
+    out["loss"].backward()
+    assert ctx.grad is not None
+
+
 def test_deep_supervision_loss():
     from brats_jepa.losses import DeepSupervisionLoss
     loss_fn = DeepSupervisionLoss()

@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Subset
 from brats_jepa.config import (
     CHECKPOINTS_DIR,
     DEFAULT_NUM_WORKERS,
+    OUTPUTS_DIR,
     get_metadata_path,
     load_yaml_config,
     merge_config_with_args,
@@ -54,8 +55,6 @@ def parse_args():
     parser.add_argument("--max_batches", type=int, default=None,
                         help="Limit batches per epoch/eval for rapid smoke testing")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for data subset sampling and initialization")
-    parser.add_argument("--seeds", type=int, nargs="+", default=None,
-                        help="Optional list of random seeds for repeated trials (e.g. --seeds 42 43 44) to report mean ± std")
     parser.add_argument("--deterministic", action="store_true", default=False,
                         help="Enforce strict cuDNN determinism (disables cuDNN benchmark)")
     return parser.parse_args()
@@ -139,7 +138,7 @@ def main():
         torch.backends.cudnn.benchmark = True
 
     # Versioned experiment directories
-    base_out = Path(args.output_dir) if args.output_dir else Path("outputs")
+    base_out = Path(args.output_dir).resolve() if args.output_dir else OUTPUTS_DIR
     exp_dir = base_out / "experiments" / args.exp_version
     ckpt_dir = exp_dir / "checkpoints"
     metrics_dir = exp_dir / "metrics"

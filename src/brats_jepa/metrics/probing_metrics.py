@@ -54,31 +54,54 @@ def compute_representation_collapse_metrics(z: torch.Tensor) -> dict[str, float]
 
     Mathematical Rationale & Defense Context:
     -----------------------------------------
-    1. Average Pairwise Cosine Similarity:
+    1. Average Pairwise Cosine Similarity (Uncentered & Centered):
            \text{CosSim}_{\text{avg}} = \frac{1}{N(N - 1)} \sum_{i \neq j} \frac{z_i^T z_j}{\|z_i\|_2 \|z_j\|_2}
-       Evaluates angular diversity across normalized latent tokens. In complete dimensional collapse
-       (where all tokens map to the identical direction vector in \mathbb{R}^D), cosine similarity
-       approaches 1.0. For uniformly distributed isotropic representations on the unit sphere,
-       the expectation is 0.0. A sample size of up to 1,000 tokens is evaluated to bound O(N^2) memory.
+       Evaluates angular diversity across normalized latent tokens. In complete directional collapse
+       (where all tokens map to an identical ray from the origin), uncentered cosine similarity approaches 1.0.
+       However, if representations have a non-zero mean centroid \bar{z} \neq 0, uncentered cosine similarity
+       is dominated by \|\bar{z}\|_2 regardless of dispersion rank.
+       
+       \text{CosSim}_{\text{centered}} = \frac{1}{N(N - 1)} \sum_{i \neq j} \frac{(z_i - \bar{z})^T (z_j - \bar{z})}{\|z_i - \bar{z}\|_2 \|z_j - \bar{z}\|_2}
+       decouples the global centroid shift from angular dispersion around the mean, yielding ~0.0 for
+       isotropic representations.
 
     2. Feature Variance:
        Computes the mean coordinate-wise empirical variance \frac{1}{D} \sum_{d=1}^D \text{Var}(z_d).
        Diagnoses point collapse where representations contract to a constant zero or static centroid.
     """
     z_flat = z.reshape(-1, z.shape[-1])  # [N, D]
-    z_norm = F.normalize(z_flat, p=2, dim=-1)
+    N_total = z_flat.shape[0]
+
+    if N_total <= 1:
+        eff_rank = compute_effective_rank(z_flat)
+        feature_var = z_flat.var(dim=0).mean().item() if N_total > 1 else 0.0
+        return {
+            "effective_rank": eff_rank,
+            "avg_cosine_sim": 1.0 if N_total == 1 else 0.0,
+            "avg_cosine_sim_centered": 0.0,
+            "feature_variance": feature_var,
+        }
 
     # Sample subset for pairwise cosine similarity if large
-    if z_norm.shape[0] > 1000:
-        indices = torch.randperm(z_norm.shape[0])[:1000]
-        z_sample = z_norm[indices]
+    if N_total > 1000:
+        indices = torch.randperm(N_total, device=z_flat.device)[:1000]
+        z_sample = z_flat[indices]
     else:
-        z_sample = z_norm
+        z_sample = z_flat
 
-    sim_matrix = z_sample @ z_sample.T
     N = z_sample.shape[0]
     mask = ~torch.eye(N, device=z.device, dtype=torch.bool)
+
+    # 1. Uncentered cosine similarity
+    z_norm = F.normalize(z_sample, p=2, dim=-1)
+    sim_matrix = z_norm @ z_norm.T
     avg_cosine_sim = sim_matrix[mask].mean().item()
+
+    # 2. Centered cosine similarity (subtract mean centroid before sphere projection)
+    z_centered = z_sample - z_sample.mean(dim=0, keepdim=True)
+    z_centered_norm = F.normalize(z_centered, p=2, dim=-1, eps=1e-8)
+    sim_matrix_centered = z_centered_norm @ z_centered_norm.T
+    avg_cosine_sim_centered = sim_matrix_centered[mask].mean().item()
 
     eff_rank = compute_effective_rank(z_flat)
     feature_var = z_flat.var(dim=0).mean().item()
@@ -86,5 +109,6 @@ def compute_representation_collapse_metrics(z: torch.Tensor) -> dict[str, float]
     return {
         "effective_rank": eff_rank,
         "avg_cosine_sim": avg_cosine_sim,
+        "avg_cosine_sim_centered": avg_cosine_sim_centered,
         "feature_variance": feature_var,
     }

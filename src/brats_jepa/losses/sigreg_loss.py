@@ -51,16 +51,19 @@ class EppsPulleyGaussianityTest(nn.Module):
     - Balestriero, R., & LeCun, Y. (2025). "Learning by Predicting Without Representation
       Collapse." arXiv:2511.08544 (LeJEPA / SigReg).
     """
-    def __init__(self, t_max: float = 3.0, n_knots: int = 17):
+    def __init__(self, t_max: float = 3.0, n_knots: int = 17, normalize_measure: bool = True):
         super().__init__()
+        self.normalize_measure = normalize_measure
         t = torch.linspace(0.0, t_max, n_knots, dtype=torch.float32)
         dt = t_max / (n_knots - 1)
         weights = torch.full((n_knots,), 2.0 * dt, dtype=torch.float32)
         weights[[0, -1]] = dt
         phi = torch.exp(-0.5 * t.square())
         # Gaussian density normalization constant 1 / sqrt(2 * pi) ensuring int d\mu(t) = 1
-        # per Epps & Pulley (1983) and Balestriero & LeCun (2025)
-        norm_const = 1.0 / math.sqrt(2.0 * math.pi)
+        # per Epps & Pulley (1983). If normalize_measure=False, matches official LeJEPA
+        # (Balestriero & LeCun, 2025, MINIMAL.md line 78) unnormalized scale where
+        # \int d\mu(t) = \sqrt{2 \pi} \approx 2.5066.
+        norm_const = 1.0 / math.sqrt(2.0 * math.pi) if normalize_measure else 1.0
         self.register_buffer("t", t)
         self.register_buffer("phi", phi)
         self.register_buffer("weights", weights * phi * norm_const)
@@ -123,12 +126,18 @@ class SigRegLoss(nn.Module):
         num_projections: int = 256,
         t_max: float = 3.0,
         n_knots: int = 17,
+        normalize_measure: bool = True,
     ):
         super().__init__()
         self.jepa_loss = IJEPALoss(loss_type=loss_type)
         self.sigreg_weight = sigreg_weight
         self.num_projections = num_projections
-        self.ep_test = EppsPulleyGaussianityTest(t_max=t_max, n_knots=n_knots)
+        self.normalize_measure = normalize_measure
+        self.ep_test = EppsPulleyGaussianityTest(
+            t_max=t_max,
+            n_knots=n_knots,
+            normalize_measure=normalize_measure,
+        )
 
     def forward(
         self,

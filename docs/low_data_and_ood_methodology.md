@@ -146,14 +146,16 @@ uv run python scripts/train_downstream.py --model_type visreg_jepa \
     --decoder_type multiscale --epochs 30 --batch_size 16 --amp
 
 # Step 3: Run Low-Data Label Efficiency Benchmark with Tumor Stratification & 3D Metrics
-uv run python scripts/evaluate_low_data.py --epochs 30 --decoder_type multiscale \
-    --evaluate_3d --exp_version v2_low_data_efficiency
+uv run python scripts/evaluate_low_data.py --epochs 30 --batch_size 32 --num_workers 2 --amp \
+    --decoder_type multiscale --exp_version v2_low_data_efficiency
 
 # Step 4: Run Synthetic OOD Scanner Generalization Benchmark
-uv run python scripts/evaluate_ood.py --decoder_type multiscale --exp_version v3_ood_generalization
+uv run python scripts/evaluate_ood.py --batch_size 32 --num_workers 2 --amp \
+    --decoder_type multiscale --exp_version v3_ood_generalization
 
 # Step 5: Run BraTS-MEN-RT Cross-Pathology OOD Benchmark
-uv run python scripts/evaluate_men_rt_ood.py --exp_version v4_men_rt_ood
+uv run python scripts/evaluate_men_rt_ood.py --max_samples 5000 --batch_size 32 --num_workers 2 --amp \
+    --decoder_type multiscale --exp_version v4_men_rt_ood
 
 # Step 6: Generate Publication Figures & Compile LaTeX Paper
 uv run python scripts/generate_figures.py

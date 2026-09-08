@@ -148,11 +148,14 @@ The self-supervised prediction task requires partitioning the $15 \times 15$ gri
     \begin{equation}
         \mathcal{C}_{\text{clean}} = \mathcal{I}_{\text{ctx, cand}} \setminus \mathcal{I}_{\text{tgt}}
     \end{equation}
-    \item \textbf{Uniform Batch Collation Replenishment}: Dense GPU tensor collation requires every sample in batch $B$ to have identical context length $N_{\text{ctx}} = 96$ patches. If $|\mathcal{C}_{\text{clean}}| \ge N_{\text{ctx}}$, we select the first $N_{\text{ctx}}$ patches. If $|\mathcal{C}_{\text{clean}}| < N_{\text{ctx}}$, the deficit is replenished by drawing uniformly at random from the non-target grid pool $\mathcal{P}_{\text{non-tgt}} = \{1, \dots, N\} \setminus \mathcal{I}_{\text{tgt}}$:
-    \begin{equation}
-        \mathcal{I}_{\text{ctx}} = \mathcal{C}_{\text{clean}} \cup \text{Sample}\left(\mathcal{P}_{\text{non-tgt}} \setminus \mathcal{C}_{\text{clean}}, \, N_{\text{ctx}} - |\mathcal{C}_{\text{clean}}|\right)
-    \end{equation}
-    This guarantees $|\mathcal{I}_{\text{ctx}}| = 96$ for every slice, eliminating variable-length padding and ragged tensors.
+    \item \textbf{4-Connected BFS Contiguous Cluster Expansion}: To preserve spatial contiguity while guaranteeing dense batch collation ($N_{\text{ctx}} = 96$ patches per slice), context patches are assembled using a 4-connected spatial breadth-first search (BFS):
+    \begin{enumerate}
+        \item A seed patch $s \sim \mathcal{U}(\mathcal{C}_{\text{clean}})$ is sampled uniformly from the unmasked candidate block.
+        \item The context cluster is grown via BFS along the 4-connected 2D grid neighborhood $\mathcal{N}_4(r, c) = \{(r\pm 1, c), (r, c\pm 1)\}$ within $\mathcal{C}_{\text{clean}}$ until reaching $N_{\text{ctx}}$ patches.
+        \item If the candidate block is spatially partitioned or exhausted before reaching $N_{\text{ctx}}$, the BFS expansion frontier continues into the remaining non-target grid patches $\mathcal{P}_{\text{non-tgt}} = \{1, \dots, N\} \setminus \mathcal{I}_{\text{tgt}}$.
+        \item A uniform random fallback completes any remaining deficit if spatial connectivity is exhausted.
+    \end{enumerate}
+    This BFS cluster sampling strictly preserves localized 2D spatial coherence (preventing point-wise pixel interpolation shortcuts) while guaranteeing identical context sequence lengths across all batch items without ragged tensors or padding tokens.
 \end{enumerate}
 
 \subsection{JEPA Predictor Architecture \& Decoupled Vectorized Gather}
@@ -299,22 +302,22 @@ Mean activations are centered along each feature channel across all tokens in th
 which removes zero-frequency offset shifts without restricting feature dispersion.
 
 \paragraph{Step 2: Coordinate Scale Regularization ($\mathcal{L}_{\text{scale}}$)}
-Coordinate variances are evaluated along each projected dimension $d \in \{1, \dots, d_p\}$:
+Coordinate standard deviations are evaluated along each projected dimension $d \in \{1, \dots, d_p\}$ over the centered batch tokens:
 \begin{equation}
-    \sigma_d^2 = \frac{1}{K} \sum_{i=1}^K z_{c, i, d}^2
+    \sigma_d = \sqrt{\frac{1}{K} \sum_{i=1}^K z_{c, i, d}^2 + \epsilon}
 \end{equation}
-Scale regularization penalizes deviations of the empirical variance from a target scale $\sigma_0^2 = 1.0$:
+Scale regularization penalizes deviations of the empirical coordinate standard deviation from a target unit scale $\sigma_0 = 1.0$ via a two-sided squared penalty \citep{wu2026visreg}:
 \begin{equation}
-    \mathcal{L}_{\text{scale}}(\mathbf{Z}) = \frac{1}{d_p} \sum_{d=1}^{d_p} \left[ \log(\sigma_d^2 + \epsilon) - \log(\sigma_0^2) \right]^2
+    \mathcal{L}_{\text{scale}}(\mathbf{Z}) = \frac{1}{d_p} \sum_{d=1}^{d_p} (\sigma_0 - \sigma_d)^2
 \end{equation}
-Alternatively, a softplus variance hinge $\mathcal{L}_{\text{scale}} = \frac{1}{d_p} \sum_{d=1}^{d_p} \text{softplus}(\sigma_0 - \sqrt{\sigma_d^2 + \epsilon})$ guarantees that variance along any principal axis cannot contract below $\sigma_0$, preventing dimensional rank collapse.
+Unlike one-sided variance hinges (e.g., in VICReg \citep{bardes2021vicreg} where $\mathcal{L}_{\text{scale}} = \frac{1}{d_p} \sum_{d=1}^{d_p} \max(0, \sigma_0 - \sigma_d)$ allows unbounded expansion $\sigma_d \gg 1$), the two-sided squared penalty strictly anchors each coordinate to unit standard deviation. This anchoring is mathematically indispensable for VisReg because the subsequent shape regularization tests projected features against standard normal quantiles $\mathcal{N}(0, 1)$; unconstrained variance dilation would induce opposing gradient dynamics between the scale and shape regularizers.
 
 \paragraph{Step 3: Feature Standardization}
-Crucially, prior to shape analysis, tokens are standardized along each coordinate:
+Crucially, prior to shape analysis, tokens are standardized along each coordinate with a stop-gradient operator $\text{sg}(\cdot)$ applied to the scale:
 \begin{equation}
-    \mathbf{z}_{s, i, d} = \frac{z_{c, i, d}}{\sqrt{\sigma_d^2 + \epsilon}}
+    \mathbf{z}_{s, i, d} = \frac{z_{c, i, d}}{\text{sg}(\sigma_d) + \epsilon}
 \end{equation}
-This standardization ensures that $\mathbb{E}[\mathbf{z}_s] = \mathbf{0}$ and $\text{diag}(\text{Cov}(\mathbf{z}_s)) = \mathbf{I}_{d_p}$, completely isolating the \emph{shape} of the latent distribution from scale and location confounders.
+This standardization ensures that $\mathbb{E}[\mathbf{z}_s] = \mathbf{0}$ and $\text{diag}(\text{Cov}(\mathbf{z}_s)) = \mathbf{I}_{d_p}$, completely isolating the \emph{shape} of the latent distribution from scale and location confounders while preventing shape gradients from altering coordinate variances.
 
 \paragraph{Step 4: Distributional Shape Regularization via 1D Sliced-Wasserstein Distance ($\mathcal{L}_{\text{shape}}$)}
 To penalize non-Gaussian higher-order moments (skewness, kurtosis, and multi-modal clustering), $M = 256$ random 1D projection directions $\mathbf{u}_m$ are sampled uniformly from the unit hypersphere $\mathbb{S}^{d_p - 1}$:

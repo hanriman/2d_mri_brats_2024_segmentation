@@ -36,6 +36,8 @@ def parse_args():
     parser.add_argument("--metadata_csv", type=str, default=None, help="Path to metadata.csv manifest file")
     parser.add_argument("--output_dir", type=str, default=None, help="Custom output directory for checkpoints and logs")
     parser.add_argument("--checkpoint_dir", type=str, default=None, help="Directory containing pre-trained SSL checkpoints")
+    parser.add_argument("--pretrained_ckpt", type=str, default=None,
+                        help="Direct path to pre-trained SSL checkpoint (.pt file) to load encoder weights from")
     parser.add_argument("--num_workers", type=int, default=DEFAULT_NUM_WORKERS,
                         help="Number of DataLoader worker processes (default: 2 on Linux, 0 on macOS)")
     parser.add_argument("--cache_data", action="store_true", default=True,
@@ -124,7 +126,10 @@ def main():
     ).to(device)
 
     # Load pre-trained encoder weights if available
-    pretrained_ckpt = src_ckpt_dir / f"best_{args.model_type}.pt"
+    if args.pretrained_ckpt:
+        pretrained_ckpt = Path(args.pretrained_ckpt).resolve()
+    else:
+        pretrained_ckpt = src_ckpt_dir / f"best_{args.model_type}.pt"
     if pretrained_ckpt.exists():
         logger.info(f"Loading pre-trained {args.model_type} encoder from {pretrained_ckpt}...")
         ckpt = torch.load(pretrained_ckpt, map_location=device)

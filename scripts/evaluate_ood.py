@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from brats_jepa.config import (
     CHECKPOINTS_DIR,
     DEFAULT_NUM_WORKERS,
+    OUTPUTS_DIR,
     get_metadata_path,
     load_yaml_config,
     merge_config_with_args,
@@ -65,6 +66,8 @@ def parse_args():
                         help="Cache loaded slices in RAM to eliminate disk I/O bottlenecks")
     parser.add_argument("--no_cache_data", action="store_false", dest="cache_data",
                         help="Disable RAM caching of slices")
+    parser.add_argument("--decoder_type", type=str, choices=["bottleneck", "multiscale"], default=None,
+                        help="Decoder architecture override for JEPA downstream segmentation models")
     parser.add_argument("--amp", action="store_true", help="Enable CUDA AMP (mixed precision)")
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches for rapid smoke testing")
     parser.add_argument("--device", type=str, default="auto", help="Device")
@@ -87,11 +90,8 @@ def main():
     if device.type == "cuda" and not args.deterministic:
         torch.backends.cudnn.benchmark = True
 
-    if args.output_dir:
-        base_out = Path(args.output_dir).resolve()
-        exp_dir = base_out / "experiments" / args.exp_version if args.exp_version else base_out
-    else:
-        exp_dir = Path("outputs/experiments") / args.exp_version
+    base_out = Path(args.output_dir).resolve() if args.output_dir else OUTPUTS_DIR
+    exp_dir = base_out / "experiments" / args.exp_version if args.exp_version else base_out
     metrics_dir = exp_dir / "metrics"
     logs_dir = exp_dir / "logs"
     for d in [exp_dir, metrics_dir, logs_dir]:
@@ -162,7 +162,7 @@ def main():
                 model = BraTS2DnnUNet(in_channels=4, out_channels=1, deep_supervision=True).to(device)
                 display_name = model_name
             else:
-                dec_type = ckpt.get("decoder_type", "bottleneck")
+                dec_type = getattr(args, "decoder_type", None) or ckpt.get("decoder_type", "bottleneck")
                 model = JEPASegmentationModel(
                     img_size=240,
                     patch_size=16,

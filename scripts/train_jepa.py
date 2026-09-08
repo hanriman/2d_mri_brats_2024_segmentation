@@ -45,6 +45,16 @@ def parse_args():
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches per epoch for quick local smoke testing")
     parser.add_argument("--swd_metric", type=str, choices=["mse", "l1"], default="mse",
                         help="Sliced-Wasserstein distance metric for VISReg shape loss (default: mse for W_2^2)")
+    parser.add_argument("--center_weight", type=float, default=1.0, help="Weight for center regularization in VisReg loss")
+    parser.add_argument("--scale_weight", type=float, default=1.0, help="Weight for scale regularization in VisReg loss")
+    parser.add_argument("--shape_weight", type=float, default=1.0, help="Weight for shape regularization in VisReg loss")
+    parser.add_argument("--scale_loss_type", type=str, choices=["squared", "hinge"], default="squared",
+                        help="Scale loss formulation for VisReg: 'squared' (default) or 'hinge'")
+    parser.add_argument("--sigreg_weight", type=float, default=1.0, help="Weight for SigReg non-collapse loss")
+    parser.add_argument("--normalize_measure", action="store_true", default=True,
+                        help="Normalize Gaussian integration measure by 1/sqrt(2*pi) in SigReg loss (default: True)")
+    parser.add_argument("--no_normalize_measure", action="store_false", dest="normalize_measure",
+                        help="Disable 1/sqrt(2*pi) normalization in SigReg loss to match official LeJEPA MINIMAL.md scale")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--deterministic", action="store_true", default=False,
                         help="Enforce strict cuDNN determinism (disables cuDNN benchmark)")
@@ -133,16 +143,29 @@ def main():
         loss_fn = IJEPALoss(loss_type="smooth_l1").to(device)
     elif args.model_type == "sigreg_jepa":
         model = SigRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
-        loss_fn = SigRegLoss(loss_type="smooth_l1", sigreg_weight=1.0, num_projections=256).to(device)
+        sig_w = getattr(args, "sigreg_weight", 1.0)
+        num_proj = getattr(args, "num_projections", 256)
+        norm_meas = getattr(args, "normalize_measure", True)
+        loss_fn = SigRegLoss(
+            loss_type="smooth_l1",
+            sigreg_weight=sig_w,
+            num_projections=num_proj,
+            normalize_measure=norm_meas,
+        ).to(device)
     elif args.model_type == "visreg_jepa":
         model = VisRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
+        center_w = getattr(args, "center_weight", 1.0)
+        scale_w = getattr(args, "scale_weight", getattr(args, "var_weight", 1.0))
+        shape_w = getattr(args, "shape_weight", getattr(args, "swd_weight", 1.0))
+        num_proj = getattr(args, "num_projections", 256)
         swd_m = getattr(args, "swd_metric", "mse")
         scale_type = getattr(args, "scale_loss_type", "squared")
         loss_fn = VisRegLoss(
             loss_type="smooth_l1",
-            var_weight=1.0,
-            swd_weight=1.0,
-            num_projections=256,
+            center_weight=center_w,
+            scale_weight=scale_w,
+            shape_weight=shape_w,
+            num_projections=num_proj,
             swd_metric=swd_m,
             scale_loss_type=scale_type,
         ).to(device)
@@ -201,12 +224,12 @@ def main():
             if use_amp:
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
                 optimizer.step()
 
             if args.model_type == "ijepa":

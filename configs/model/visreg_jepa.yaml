@@ -13,4 +13,10 @@ num_context_patches: 96
 num_target_masks: 4
 var_weight: 1.0
 swd_weight: 1.0
+center_weight: 1.0
+scale_weight: 1.0
+shape_weight: 1.0
+scale_loss_type: "squared"
+swd_metric: "mse"
 num_projections: 256
+

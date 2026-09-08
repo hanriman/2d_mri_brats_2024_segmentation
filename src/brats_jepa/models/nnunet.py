@@ -1,6 +1,7 @@
 import torch
-import torch.nn as nn
 from monai.networks.nets import DynUNet
+from torch import nn
+
 
 class BraTS2DnnUNet(nn.Module):
     r"""

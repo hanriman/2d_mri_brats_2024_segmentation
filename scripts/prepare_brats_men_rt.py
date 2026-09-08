@@ -1,5 +1,4 @@
 import argparse
-from pathlib import Path
 
 import nibabel as nib
 import numpy as np
@@ -194,7 +193,7 @@ def main():
     csv_path = output_dir / "metadata.csv"
     df.to_csv(csv_path, index=False)
     
-    logger.info(f"BraTS-MEN-RT preprocessing complete!")
+    logger.info("BraTS-MEN-RT preprocessing complete!")
     logger.info(f"Extracted {len(df)} total 2D axial slices across {len(t1c_files)} patients.")
     logger.info(f"Saved metadata manifest to: {csv_path}")
 

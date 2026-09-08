@@ -44,3 +44,69 @@ def test_random_modality_dropout():
         active_channels = (out_all[b].sum(dim=(-1, -2)) > 0).sum()
         assert active_channels >= 1
 
+
+def test_jepa_masking_spatial_uniformity():
+    """Verify that stochastic context sampling avoids top-row truncation bias."""
+    import numpy as np
+    masking = JEPAMaskingTransform(
+        img_size=240,
+        patch_size=16,
+        num_target_masks=4,
+        num_context_patches=100,
+    )
+    x = torch.randn(4, 240, 240)
+    _grid_h = 240 // 16  # 15
+    grid_w = 240 // 16  # 15
+
+    all_rows = []
+    for _ in range(50):
+        res = masking(x)
+        ctx = res["context_indices"].numpy()
+        rows = ctx // grid_w
+        all_rows.extend(rows.tolist())
+        # Verify no overlap between context and target masks
+        ctx_set = set(ctx.tolist())
+        for tgt in res["target_indices"]:
+            tgt_set = set(tgt.numpy().tolist())
+            assert ctx_set.isdisjoint(tgt_set), "Context and target indices must never overlap"
+
+    all_rows = np.array(all_rows)
+    # The grid has rows 0 to 14. Center is 7.0.
+    # Without bias, mean row should be roughly centered (between 5.0 and 9.0)
+    assert 5.0 <= all_rows.mean() <= 9.0, f"Mean row was {all_rows.mean():.2f}, indicating spatial bias"
+    # Sampled patches must reach both top (row <= 2) and bottom (row >= 12)
+    assert (all_rows <= 2).sum() > 0, "Top rows never sampled"
+    assert (all_rows >= 12).sum() > 0, "Bottom rows never sampled (indicates top-row truncation bias)"
+
+
+def test_select_patient_slices():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    from prepare_data import select_patient_slices
+
+    candidates = [
+        {"z": i, "tumor_pixel_count": (100 if 20 <= i <= 30 else 0), "non_zero_brain": 5000}
+        for i in range(50)
+    ]
+
+    # 1. Representative: 3 tumor + 2 empty
+    rep = select_patient_slices(candidates, slices_per_patient=5, strategy="representative")
+    assert len(rep) == 5
+    tumor_count = sum(1 for s in rep if s["tumor_pixel_count"] > 0)
+    empty_count = sum(1 for s in rep if s["tumor_pixel_count"] == 0)
+    assert tumor_count == 3
+    assert empty_count == 2
+
+    # 2. Dense tumor: all or evenly spaced tumor slices
+    dense = select_patient_slices(candidates, slices_per_patient=5, strategy="dense_tumor")
+    assert len(dense) == 5
+    for s in dense:
+        assert s["tumor_pixel_count"] > 0
+
+    # 3. Uniform axial: evenly spaced across entire z range
+    axial = select_patient_slices(candidates, slices_per_patient=5, strategy="uniform_axial")
+    assert len(axial) == 5
+    assert axial[0]["z"] == 0
+    assert axial[-1]["z"] == 49
+

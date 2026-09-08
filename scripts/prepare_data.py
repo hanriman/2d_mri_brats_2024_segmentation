@@ -22,6 +22,9 @@ def parse_args():
                         help="Minimum non-zero brain pixels per slice")
     parser.add_argument("--limit", type=int, default=None,
                         help="Limit the number of patient scans to preprocess (for debugging)")
+    parser.add_argument("--sampling_strategy", type=str, default="representative",
+                        choices=["representative", "dense_tumor", "uniform_axial"],
+                        help="Slice sampling strategy: 'representative' (up to 3 tumor + 2 empty slices), 'dense_tumor', or 'uniform_axial'")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for data splitting reproducibility")
     return parser.parse_args()
@@ -39,14 +42,35 @@ def zscore_normalize(volume: np.ndarray) -> np.ndarray:
     return normalized.astype(np.float32)
 
 
-def select_patient_slices(candidates: list, slices_per_patient: int = 5) -> list:
-    """Selects up to `slices_per_patient` slices per volume:
-    - Up to 3 top slices with largest tumor pixel count
-    - 2 context non-tumor slices (lower & upper brain elevation)
+def select_patient_slices(
+    candidates: list,
+    slices_per_patient: int = 5,
+    strategy: str = "representative",
+) -> list:
+    """Selects slices per volume according to strategy:
+    - 'representative': up to 3 top tumor slices + 2 context non-tumor slices.
+    - 'dense_tumor': all candidate slices with tumor (or evenly sampled across tumor range if slices_per_patient is bounded).
+    - 'uniform_axial': uniformly spaced slices across the entire axial height.
     """
-    if len(candidates) <= slices_per_patient:
+    if len(candidates) <= slices_per_patient and slices_per_patient > 0:
         return sorted(candidates, key=lambda c: c["z"])
 
+    if strategy == "uniform_axial":
+        if slices_per_patient <= 0 or slices_per_patient >= len(candidates):
+            return sorted(candidates, key=lambda c: c["z"])
+        idxs = np.linspace(0, len(candidates) - 1, num=slices_per_patient, dtype=int)
+        return sorted([candidates[i] for i in idxs], key=lambda c: c["z"])
+
+    elif strategy == "dense_tumor":
+        tumor_cands = sorted([c for c in candidates if c["tumor_pixel_count"] > 0], key=lambda c: c["z"])
+        if not tumor_cands:
+            tumor_cands = sorted(candidates, key=lambda c: c["z"])
+        if slices_per_patient <= 0 or len(tumor_cands) <= slices_per_patient:
+            return tumor_cands
+        idxs = np.linspace(0, len(tumor_cands) - 1, num=slices_per_patient, dtype=int)
+        return [tumor_cands[i] for i in idxs]
+
+    # Default 'representative' strategy
     tumor_cands = sorted([c for c in candidates if c["tumor_pixel_count"] > 0],
                          key=lambda c: c["tumor_pixel_count"], reverse=True)
     non_tumor_cands = sorted([c for c in candidates if c["tumor_pixel_count"] == 0],
@@ -161,7 +185,11 @@ def main():
         if not patient_candidates:
             continue
 
-        selected_slices = select_patient_slices(patient_candidates, slices_per_patient=args.slices_per_patient)
+        selected_slices = select_patient_slices(
+            patient_candidates,
+            slices_per_patient=args.slices_per_patient,
+            strategy=args.sampling_strategy,
+        )
 
         for item in selected_slices:
             z = item["z"]

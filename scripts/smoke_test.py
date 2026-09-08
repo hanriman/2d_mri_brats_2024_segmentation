@@ -8,7 +8,6 @@ Usage:
     uv run python scripts/smoke_test.py
 """
 
-import os
 import shutil
 import subprocess
 import sys

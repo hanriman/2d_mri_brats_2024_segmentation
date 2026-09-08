@@ -6,9 +6,13 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from brats_jepa.config import CHECKPOINTS_DIR, DATA_DIR
+from brats_jepa.config import CHECKPOINTS_DIR
 from brats_jepa.metrics import compute_segmentation_metrics
-from brats_jepa.models import IJEPA, BraTS2DnnUNet, BraTS2DUNet, JEPASegmentationModel, SigRegJEPA, VisRegJEPA
+from brats_jepa.models import (
+    BraTS2DnnUNet,
+    BraTS2DUNet,
+    JEPASegmentationModel,
+)
 from brats_jepa.utils import get_device, get_logger, set_seed
 
 
@@ -116,7 +120,7 @@ def main():
     results = []
     
     for strat_name, adapt_fn in strategies.items():
-        logger.info(f"\n" + "="*80)
+        logger.info("\n" + "="*80)
         logger.info(f"EVALUATING ADAPTATION STRATEGY: {strat_name}")
         logger.info("="*80)
         

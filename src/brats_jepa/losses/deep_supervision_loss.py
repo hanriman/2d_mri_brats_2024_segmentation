@@ -1,7 +1,9 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
 from .dice_bce_loss import CombinedDiceBCELoss
+
 
 class DeepSupervisionLoss(nn.Module):
     r"""

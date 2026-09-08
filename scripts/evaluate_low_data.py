@@ -1,28 +1,26 @@
 import argparse
-import json
 import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 
 from brats_jepa.config import (
     CHECKPOINTS_DIR,
-    DATA_DIR,
     DEFAULT_NUM_WORKERS,
-    LOGS_DIR,
-    METRICS_DIR,
-    ensure_directories,
     get_metadata_path,
 )
 from brats_jepa.data import BraTS2DDataset, RandomModalityDropout
 from brats_jepa.losses import CombinedDiceBCELoss, DeepSupervisionLoss
 from brats_jepa.metrics import compute_segmentation_metrics
-from brats_jepa.models import IJEPA, BraTS2DnnUNet, BraTS2DUNet, JEPASegmentationModel, SigRegJEPA, VisRegJEPA
-from brats_jepa.utils import MetricTracker, get_device, get_logger, set_seed
+from brats_jepa.models import (
+    BraTS2DnnUNet,
+    BraTS2DUNet,
+    JEPASegmentationModel,
+)
+from brats_jepa.utils import get_device, get_logger, set_seed
 
 
 def parse_args():
@@ -131,7 +129,7 @@ def main():
             prefetch_factor=2 if args.num_workers > 0 else None,
         )
         
-        logger.info(f"\n" + "="*80)
+        logger.info("\n" + "="*80)
         logger.info(f"EVALUATING LABEL FRACTION: {frac*100:.0f}% ({n_samples}/{total_train_samples} training slices)")
         logger.info("="*80)
         

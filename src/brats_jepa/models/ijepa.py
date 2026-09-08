@@ -107,8 +107,6 @@ class IJEPA(nn.Module):
         context_indices: [B, N_ctx]
         target_indices_list: List of [B, N_tgt] target mask index tensors
         """
-        B = images.shape[0]
-        
         # 1. Forward online context encoder
         context_tokens = self.context_encoder(images, patch_indices=context_indices)
         

@@ -13,6 +13,8 @@ from brats_jepa.config import (
     METRICS_DIR,
     ensure_directories,
     get_metadata_path,
+    load_yaml_config,
+    merge_config_with_args,
 )
 from brats_jepa.data import BraTS2DDataset, JEPAMaskingTransform, RandomModalityDropout
 from brats_jepa.losses import IJEPALoss, SigRegLoss, VisRegLoss
@@ -22,6 +24,7 @@ from brats_jepa.utils import MetricTracker, get_device, get_logger, set_seed
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Self-Supervised JEPA Pre-training (I-JEPA, SigReg JEPA, VisReg JEPA)")
+    parser.add_argument("--config", type=str, default=None, help="Path to YAML configuration file")
     parser.add_argument("--model_type", type=str, choices=["ijepa", "sigreg_jepa", "visreg_jepa"], default="ijepa",
                         help="JEPA variant model architecture")
     parser.add_argument("--epochs", type=int, default=50, help="Number of pre-training epochs")
@@ -45,6 +48,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.config:
+        cfg = load_yaml_config(args.config)
+        args = merge_config_with_args(cfg, args)
     set_seed(args.seed)
     device = get_device(args.device)
 
@@ -155,11 +161,12 @@ def main():
                 outputs = model(images, ctx_idx, tgt_idx_list)
                 if args.model_type == "ijepa":
                     loss = loss_fn(outputs["predictions"], outputs["targets"])
-                elif args.model_type == "sigreg_jepa":
-                    loss_dict = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])
-                    loss = loss_dict["loss"]
-                elif args.model_type == "visreg_jepa":
-                    loss_dict = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])
+                elif args.model_type in ("sigreg_jepa", "visreg_jepa"):
+                    loss_dict = loss_fn(
+                        outputs["predictions"],
+                        outputs["targets"],
+                        projected_tokens=outputs["projected_tokens"],
+                    )
                     loss = loss_dict["loss"]
 
             if use_amp:
@@ -202,10 +209,12 @@ def main():
                     outputs = model(images, ctx_idx, tgt_idx_list)
                     if args.model_type == "ijepa":
                         loss = loss_fn(outputs["predictions"], outputs["targets"])
-                    elif args.model_type == "sigreg_jepa":
-                        loss = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])["loss"]
-                    elif args.model_type == "visreg_jepa":
-                        loss = loss_fn(outputs["predictions"], outputs["targets"], outputs["projected_tokens"])["loss"]
+                    elif args.model_type in ("sigreg_jepa", "visreg_jepa"):
+                        loss = loss_fn(
+                            outputs["predictions"],
+                            outputs["targets"],
+                            projected_tokens=outputs["projected_tokens"],
+                        )["loss"]
                 val_loss_sum += loss.item()
 
         n_val_batches = min(len(val_loader), args.max_batches) if args.max_batches else len(val_loader)
@@ -224,21 +233,27 @@ def main():
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             ckpt_path = ckpt_dir / f"min_loss_{args.model_type}.pt"
-            torch.save({
+            min_loss_payload = {
                 "epoch": epoch,
                 "model_type": args.model_type,
                 "context_encoder_state_dict": model.context_encoder.state_dict(),
                 "val_loss": best_val_loss,
-            }, ckpt_path)
+            }
+            if hasattr(model, "target_encoder"):
+                min_loss_payload["target_encoder_state_dict"] = model.target_encoder.state_dict()
+            torch.save(min_loss_payload, ckpt_path)
 
         if epoch % 10 == 0 or epoch == args.epochs:
             periodic_path = ckpt_dir / f"{args.model_type}_epoch_{epoch:02d}.pt"
-            torch.save({
+            periodic_payload = {
                 "epoch": epoch,
                 "model_type": args.model_type,
                 "context_encoder_state_dict": model.context_encoder.state_dict(),
                 "val_loss": avg_val_loss,
-            }, periodic_path)
+            }
+            if hasattr(model, "target_encoder"):
+                periodic_payload["target_encoder_state_dict"] = model.target_encoder.state_dict()
+            torch.save(periodic_payload, periodic_path)
 
     # In self-supervised learning (I-JEPA, LeJEPA, VISReg), the final epoch representations
     # after full cosine annealing are fully structured and mature for downstream tasks.
@@ -254,6 +269,8 @@ def main():
         "val_loss": avg_val_loss,
         "checkpoint_type": "final_epoch",  # Explicit: this is the last epoch, not best val loss
     }
+    if hasattr(model, "target_encoder"):
+        final_payload["target_encoder_state_dict"] = model.target_encoder.state_dict()
     torch.save(final_payload, final_ckpt)
     torch.save(final_payload, best_ckpt)
     logger.info(f"===> Saved final pre-trained {args.model_type} encoder (Epoch {args.epochs}) to {best_ckpt.name} and {final_ckpt.name}")

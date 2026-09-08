@@ -1,11 +1,13 @@
 import numpy as np
 import torch
+
 from brats_jepa.metrics.segmentation_metrics import (
+    _extract_surface_points,
     compute_dice_score,
     compute_hd95_single,
     compute_segmentation_metrics,
-    _extract_surface_points,
 )
+
 
 def test_surface_point_extraction():
     mask = np.zeros((20, 20), dtype=bool)
@@ -15,15 +17,17 @@ def test_surface_point_extraction():
     assert len(pts) > 0
     assert len(pts) < 100
 
+
 def test_hd95_identical_and_empty():
     m1 = np.zeros((50, 50))
     m1[10:20, 10:20] = 1
     # Identical
     assert compute_hd95_single(m1, m1) == 0.0
-    
+
     # One empty -> returns diagonal sqrt(50^2 + 50^2) = 50 * sqrt(2) ~ 70.71
     m2 = np.zeros((50, 50))
     assert abs(compute_hd95_single(m1, m2) - float(np.sqrt(50**2 + 50**2))) < 1e-3
+
 
 def test_segmentation_metrics():
     pred = torch.randn(2, 1, 64, 64)
@@ -34,3 +38,147 @@ def test_segmentation_metrics():
     assert "hd95" in metrics
     assert 0.0 <= metrics["dice"] <= 1.0
     assert metrics["hd95"] >= 0.0
+
+
+def test_all_zero_prediction_on_tumor_slice():
+    # Slice has tumor (target non-empty), pred is all zeros (logits < -10)
+    target = torch.zeros(1, 1, 64, 64)
+    target[:, :, 10:20, 10:20] = 1.0
+    pred = torch.full_like(target, -10.0)  # sigmoid(-10) ~ 0
+
+    metrics = compute_segmentation_metrics(pred, target)
+    assert metrics["dice"] == 0.0
+    assert metrics["iou"] == 0.0
+    assert metrics["precision"] == 0.0
+    assert metrics["recall"] == 0.0
+    assert metrics["dice_tumor_only"] == 0.0
+    assert metrics["has_tumor_per_sample"] == [True]
+
+
+def test_all_zero_prediction_on_empty_slice():
+    # Slice has NO tumor, pred is all zeros (correct rejection)
+    target = torch.zeros(1, 1, 64, 64)
+    pred = torch.full_like(target, -10.0)
+
+    metrics = compute_segmentation_metrics(pred, target)
+    assert metrics["dice"] == 1.0
+    assert metrics["iou"] == 1.0
+    assert metrics["precision"] == 1.0
+    assert metrics["recall"] == 1.0
+    assert metrics["hd95"] == 0.0
+    assert metrics["has_tumor_per_sample"] == [False]
+
+
+def test_false_alarm_prediction_on_empty_slice():
+    # Slice has NO tumor, but model predicts tumor (FP > 0)
+    target = torch.zeros(1, 1, 64, 64)
+    pred = torch.full_like(target, -10.0)
+    pred[:, :, 10:20, 10:20] = 10.0  # sigmoid(10) ~ 1
+
+    metrics = compute_segmentation_metrics(pred, target)
+    assert metrics["dice"] == 0.0
+    assert metrics["iou"] == 0.0
+    assert metrics["precision"] == 0.0
+    assert metrics["recall"] == 0.0
+    assert metrics["hd95"] > 0.0
+    assert metrics["has_tumor_per_sample"] == [False]
+
+
+def test_compute_dice_score_edge_cases():
+    target = torch.zeros(1, 1, 32, 32)
+    # Both empty
+    pred_empty = torch.full_like(target, -10.0)
+    assert compute_dice_score(pred_empty, target) == 1.0
+
+    # Target empty, pred non-empty
+    pred_non_empty = torch.full_like(target, 10.0)
+    assert compute_dice_score(pred_non_empty, target) == 0.0
+
+    # Target non-empty, pred empty
+    target[0, 0, 5:10, 5:10] = 1.0
+    assert compute_dice_score(pred_empty, target) == 0.0
+
+    # Both identical non-empty
+    assert compute_dice_score(pred_non_empty, torch.ones_like(target)) == 1.0
+
+
+def test_hd95_3d():
+    from brats_jepa.metrics.segmentation_metrics import compute_hd95_3d
+
+    v1 = np.zeros((10, 40, 40), dtype=bool)
+    v2 = np.zeros((10, 40, 40), dtype=bool)
+
+    # Both empty
+    assert compute_hd95_3d(v1, v2) == 0.0
+
+    # One empty
+    v1[2:6, 10:20, 10:20] = True
+    diag = float(np.sqrt(10**2 + 40**2 + 40**2))
+    assert abs(compute_hd95_3d(v1, v2) - diag) < 1e-3
+
+    # Identical non-empty
+    assert compute_hd95_3d(v1, v1) == 0.0
+
+    # Offset by 2 voxels
+    v2[2:6, 12:22, 10:20] = True
+    hd = compute_hd95_3d(v1, v2)
+    assert 1.0 <= hd <= 3.0
+
+
+def test_patient_volume_metrics():
+    from brats_jepa.metrics.segmentation_metrics import compute_patient_volume_metrics
+
+    # 2 patients: patient_A has 2 tumor slices and 1 empty slice.
+    # patient_B has 1 tumor slice and 2 empty slices.
+    patient_ids = ["patient_A", "patient_A", "patient_A", "patient_B", "patient_B", "patient_B"]
+    slice_indices = [0, 1, 2, 0, 1, 2]
+
+    # Slice 0 (A): tumor, pred perfect
+    t0 = torch.zeros(1, 1, 32, 32)
+    t0[:, :, 5:15, 5:15] = 1.0
+    p0 = torch.full_like(t0, -10.0)
+    p0[:, :, 5:15, 5:15] = 10.0
+    # Slice 1 (A): tumor, pred perfect
+    t1 = torch.zeros(1, 1, 32, 32)
+    t1[:, :, 10:20, 10:20] = 1.0
+    p1 = torch.full_like(t1, -10.0)
+    p1[:, :, 10:20, 10:20] = 10.0
+    # Slice 2 (A): empty, pred empty
+    t2 = torch.zeros(1, 1, 32, 32)
+    p2 = torch.full_like(t2, -10.0)
+
+    # Patient B: all zero prediction while slice 0 has tumor (collapsed model)
+    t3 = torch.zeros(1, 1, 32, 32)
+    t3[:, :, 8:18, 8:18] = 1.0
+    p3 = torch.full_like(t3, -10.0)
+    t4 = torch.zeros(1, 1, 32, 32)
+    p4 = torch.full_like(t4, -10.0)
+    t5 = torch.zeros(1, 1, 32, 32)
+    p5 = torch.full_like(t5, -10.0)
+
+    slice_preds = [p0, p1, p2, p3, p4, p5]
+    slice_targets = [t0, t1, t2, t3, t4, t5]
+
+    vol_metrics = compute_patient_volume_metrics(
+        slice_preds, slice_targets, patient_ids, slice_indices=slice_indices
+    )
+
+    assert "dice_3d" in vol_metrics
+    assert "per_patient" in vol_metrics
+    assert vol_metrics["num_patients"] == 2
+
+    # Patient A should have perfect 3D Dice = 1.0
+    assert vol_metrics["per_patient"]["patient_A"]["dice"] == 1.0
+    assert vol_metrics["per_patient"]["patient_A"]["precision"] == 1.0
+    assert vol_metrics["per_patient"]["patient_A"]["recall"] == 1.0
+    assert vol_metrics["per_patient"]["patient_A"]["hd95"] == 0.0
+
+    # Patient B had complete background collapse on a volume containing tumor -> 3D Dice must be 0.0!
+    assert vol_metrics["per_patient"]["patient_B"]["dice"] == 0.0
+    assert vol_metrics["per_patient"]["patient_B"]["iou"] == 0.0
+    assert vol_metrics["per_patient"]["patient_B"]["precision"] == 0.0
+    assert vol_metrics["per_patient"]["patient_B"]["recall"] == 0.0
+    assert vol_metrics["per_patient"]["patient_B"]["hd95"] > 0.0
+
+    # Mean 3D Dice across the two patients should be 0.5
+    assert abs(vol_metrics["dice_3d"] - 0.5) < 1e-5

@@ -17,13 +17,13 @@ This repository investigates Joint-Embedding Predictive Architectures (JEPA) for
 
 ## 2. Converged Benchmark Summary Table (Version 1: Full-Data 100% Labels)
 
-| Model Architecture | Downstream Test Dice $\uparrow$ | Downstream Test IoU $\uparrow$ | 95th Percentile HD95 $\downarrow$ | Effective Feature Rank $\uparrow$ | Avg Cosine Sim $\downarrow$ | Inference Latency | Training Speed |
+| Model Architecture | Downstream Test Dice $\uparrow$ | Downstream Test IoU $\uparrow$ | 95th Percentile HD95 $\downarrow$ | Effective Feature Rank $\uparrow$ | Avg Cosine Sim $\downarrow$ | Inference Latency $\downarrow$ | Training Speed $\downarrow$ |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **UNet Baseline (Supervised)** | 0.8691 | 0.7701 | 5.22 px | N/A (CNN) | N/A | **19.18 ms/slice** | **17.61 s/epoch** |
-| **nnU-Net Baseline (Supervised SOTA)** | **0.9073** | **0.8319** | **3.34 px** | N/A (CNN) | N/A | 20.59 ms/slice | 33.65 s/epoch |
-| **I-JEPA (Fine-tuned)** | 0.8437 | 0.7332 | 11.06 px | 124.98 | 0.9556 | 18.40 ms/slice | 20.32 s/epoch |
-| **SigReg JEPA (Fine-tuned)** | **0.8530** | **0.7464** | **10.75 px** | **366.91** (Max) | **0.0309** | **18.38 ms/slice** | **20.16 s/epoch** |
-| **VisReg JEPA (Fine-tuned)** | 0.8358 | 0.7215 | 12.19 px | 16.92 | **0.0132** | 18.21 ms/slice | 20.23 s/epoch |
+| **UNet Baseline (Supervised)** | 0.4523 | 0.4037 | 169.26 px | N/A (CNN) | N/A | 12.60 ms/slice | 39.22 s/epoch |
+| **nnU-Net Baseline (Supervised SOTA)** | **0.8366** | **0.7956** | **40.71 px** | N/A (CNN) | N/A | 16.57 ms/slice | 80.69 s/epoch |
+| **I-JEPA (Fine-tuned)** | 0.8147 | 0.7617 | 45.75 px | 9.02 | **0.2946** | 8.78 ms/slice | 38.94 s/epoch |
+| **SigReg JEPA (Fine-tuned)** | **0.8271** | **0.7761** | **41.67 px** | 11.88 | 0.7531 | 6.94 ms/slice | 39.23 s/epoch |
+| **VisReg JEPA (Fine-tuned)** | 0.8177 | 0.7670 | 45.86 px | **26.38** (Max) | 0.9102 | **6.73 ms/slice** | **38.80 s/epoch** |
 
 ---
 

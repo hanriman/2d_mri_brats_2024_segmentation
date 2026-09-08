@@ -91,8 +91,6 @@ class SigRegJEPA(nn.Module):
         context_indices: torch.Tensor,
         target_indices_list: list[torch.Tensor],
     ) -> dict[str, Any]:
-        B = images.shape[0]
-        
         # 1. Forward encoder on full image without gradients to extract target representations.
         # Switch to eval mode to disable dropout/stochastic layers in targets, then restore.
         was_training = self.context_encoder.training

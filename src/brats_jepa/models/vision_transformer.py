@@ -91,12 +91,18 @@ class VisionTransformerEncoder2D(nn.Module):
         self.blocks = nn.TransformerEncoder(encoder_layer, num_layers=depth, enable_nested_tensor=False)
         self.norm = nn.LayerNorm(embed_dim)
 
-    def forward(self, x: torch.Tensor, patch_indices: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        patch_indices: torch.Tensor | None = None,
+        return_intermediate: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
         """
         x: [B, C, H, W]
         patch_indices: Optional [B, N_ctx] context patch subset indices
+        return_intermediate: If True, returns (out, intermediates) where intermediates is a list
+                             of hidden state tensors from each Transformer block.
         """
-        B = x.shape[0]
         tokens = self.patch_embed(x) + self.pos_embed  # [B, N_patches, D]
         
         if patch_indices is not None:
@@ -107,6 +113,15 @@ class VisionTransformerEncoder2D(nn.Module):
             else:
                 tokens = tokens.gather(1, patch_indices.unsqueeze(-1).expand(-1, -1, tokens.size(-1)))
                 
+        if return_intermediate:
+            intermediates = []
+            hidden = tokens
+            for layer in self.blocks.layers:
+                hidden = layer(hidden)
+                intermediates.append(hidden)
+            out = self.norm(hidden)
+            return out, intermediates
+
         out = self.blocks(tokens)
         out = self.norm(out)
         return out

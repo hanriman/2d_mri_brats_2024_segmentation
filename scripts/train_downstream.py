@@ -3,7 +3,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-
 import torch
 from torch.utils.data import DataLoader
 
@@ -14,6 +13,8 @@ from brats_jepa.config import (
     METRICS_DIR,
     ensure_directories,
     get_metadata_path,
+    load_yaml_config,
+    merge_config_with_args,
 )
 from brats_jepa.data import BraTS2DDataset, RandomModalityDropout
 from brats_jepa.losses import CombinedDiceBCELoss
@@ -24,6 +25,7 @@ from brats_jepa.utils import MetricTracker, get_device, get_logger, set_seed
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Downstream Segmentation Fine-Tuning for Pre-Trained JEPA Variants")
+    parser.add_argument("--config", type=str, default=None, help="Path to YAML configuration file")
     parser.add_argument("--model_type", type=str, choices=["ijepa", "sigreg_jepa", "visreg_jepa"], default="ijepa",
                         help="JEPA variant encoder to fine-tune")
     parser.add_argument("--epochs", type=int, default=30, help="Training epochs")
@@ -43,12 +45,19 @@ def parse_args():
     parser.add_argument("--amp", action="store_true", default=True, help="Enable automatic mixed precision on CUDA")
     parser.add_argument("--no_amp", action="store_false", dest="amp", help="Disable automatic mixed precision")
     parser.add_argument("--device", type=str, default="auto", help="Device")
+    parser.add_argument("--decoder_type", type=str, choices=["bottleneck", "multiscale"], default="bottleneck",
+                        help="Downstream decoder architecture: standard bottleneck or hierarchical multiscale feature pyramid")
+    parser.add_argument("--encoder_source", type=str, choices=["target", "context"], default="target",
+                        help="Source encoder weights to load from pre-trained checkpoint: target (EMA teacher) or context (online student)")
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches per epoch for quick local smoke testing")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    if args.config:
+        cfg = load_yaml_config(args.config)
+        args = merge_config_with_args(cfg, args)
     set_seed(args.seed)
     device = get_device(args.device)
 
@@ -109,6 +118,7 @@ def main():
         embed_dim=384,
         out_channels=1,
         freeze_encoder=args.freeze_encoder,
+        decoder_type=args.decoder_type,
     ).to(device)
 
     # Load pre-trained encoder weights if available
@@ -116,7 +126,9 @@ def main():
     if pretrained_ckpt.exists():
         logger.info(f"Loading pre-trained {args.model_type} encoder from {pretrained_ckpt}...")
         ckpt = torch.load(pretrained_ckpt, map_location=device)
-        model.load_pretrained_encoder(ckpt["context_encoder_state_dict"])
+        state_key = "target_encoder_state_dict" if (args.encoder_source == "target" and "target_encoder_state_dict" in ckpt) else "context_encoder_state_dict"
+        logger.info(f"Using encoder weights from checkpoint key: '{state_key}' (requested source: {args.encoder_source})")
+        model.load_pretrained_encoder(ckpt[state_key])
     else:
         logger.warning(f"Pre-trained checkpoint {pretrained_ckpt} not found! Initializing with random weights.")
 
@@ -211,6 +223,7 @@ def main():
             torch.save({
                 "epoch": epoch,
                 "model_type": args.model_type,
+                "decoder_type": args.decoder_type,
                 "model_state_dict": model.state_dict(),
                 "val_dice": best_dice,
                 "val_hd95": avg_val_hd95,

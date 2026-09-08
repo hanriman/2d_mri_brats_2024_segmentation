@@ -1,5 +1,6 @@
 
 import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -13,25 +14,25 @@ class VisRegLoss(nn.Module):
 
     Mathematical Rationale & Defense Context:
     -----------------------------------------
-    1. Decoupled Scale and Shape Regularization:
-       Standard self-supervised regularization methods (like VICReg) couple variance,
-       covariance, and invariance into joint objectives that require fragile tuning of
-       trade-off coefficients. VISReg decouples regularization into two orthogonal axes:
-       - **Scale Regularization** (\mathcal{L}_{\text{var}}): An axis-aligned hinge penalty
-         guaranteeing each representation dimension maintains empirical standard deviation
-         \ge \gamma = 1.0, preventing point collapse (z \to 0).
-       - **Shape Regularization** (\mathcal{L}_{\text{SWD}}): The Sliced Wasserstein Distance
-         comparing 1D empirical quantiles against standard Gaussian quantiles after standardization.
+    1. Decoupled Center, Scale, and Shape Regularization (Wu et al., 2026):
+       VISReg regularizes latent representations via three principled statistical objectives:
+       - **Center Regularization** (\mathcal{L}_{\text{center}}): Forces empirical mean
+         representations across the batch to be centered at the origin:
+             \mathcal{L}_{\text{center}} = \frac{1}{D} \|\mu_z\|_2^2
+       - **Scale Regularization** (\mathcal{L}_{\text{scale}}): Dimension-wise squared penalty
+         enforcing standard deviation to match \gamma = 1.0, preventing point collapse:
+             \mathcal{L}_{\text{scale}} = \frac{1}{D} \sum_{d=1}^D (1 - \sigma_d)^2
+       - **Shape Regularization** (\mathcal{L}_{\text{SWD}}): Sliced Wasserstein Distance against
+         analytical Gaussian quantiles. Features are centered and normalized with stop-gradient on
+         standard deviation \tilde{z} = (z - \mu) / (\text{sg}(\sigma) + \epsilon), then projected
+         onto random hypersphere rays u \sim \mathbb{S}^{D-1}. Crucially, projections are NOT
+         standardized along each 1D slice with autograd, which prevents dimensional collapse onto
+         oblique hyperplanes and restores high effective representation rank.
 
-    2. Theoretical Explanation of Effective Rank Behavior (Table 1 Defense):
-       Because `_sliced_wasserstein_distance` standardizes each projection:
-           \tilde{p} = \frac{p - \mu_p}{\sigma_p}
-       the SWD shape loss is explicitly scale-invariant along any projection ray. Consequently,
-       non-axis-aligned low-rank subspace compression (where variance along an oblique direction
-       is diminished) is NOT penalized by SWD, while `_batch_variance_loss` only constrains
-       axis-aligned coordinate variances. This explains why VisReg achieves high segmentation
-       performance (Dice 0.865) while exhibiting a lower effective rank (16.92 vs 58.4 in SigReg),
-       a key scientific observation for thesis defense.
+    2. AMP Numerical Stability in Quantile Evaluation:
+       Gaussian quantiles \Phi^{-1}((i - 0.5) / N) are computed strictly in `torch.float32` before
+       being cast to the token dtype, preventing numerical saturation and `inf`/`nan` explosion in
+       `torch.erfinv` at distribution tails under AMP `float16`.
 
     3. Closed-Form 1D Wasserstein Computation:
        The 1D Wasserstein-1 distance between sorted empirical samples and target quantiles has
@@ -46,47 +47,65 @@ class VisRegLoss(nn.Module):
     - Bonneel, N., et al. (2015). "Sliced and Radon transform Wasserstein metrics of distributions."
       Journal of Mathematical Imaging and Vision, 51(1), 22-45.
     """
+
     def __init__(
         self,
         loss_type: str = "smooth_l1",
-        var_weight: float = 1.0,
+        center_weight: float = 1.0,
+        scale_weight: float = 1.0,
         swd_weight: float = 1.0,
+        shape_weight: float | None = None,
         num_projections: int = 256,
         target_std: float = 1.0,
+        var_weight: float | None = None,
     ):
         super().__init__()
         self.jepa_loss = IJEPALoss(loss_type=loss_type)
-        self.var_weight = var_weight
-        self.swd_weight = swd_weight
+        self.center_weight = center_weight
+        self.scale_weight = var_weight if var_weight is not None else scale_weight
+        self.swd_weight = shape_weight if shape_weight is not None else swd_weight
+        self.shape_weight = self.swd_weight
         self.num_projections = num_projections
         self.target_std = target_std
+        # Backwards compatibility attribute
+        self.var_weight = self.scale_weight
+
+    def _center_loss(self, z: torch.Tensor) -> torch.Tensor:
+        r"""Center regularization: (1/D) * ||mu_z||_2^2."""
+        mu = z.mean(dim=0)
+        return torch.mean(mu**2)
+
+    def _scale_loss(self, z: torch.Tensor) -> torch.Tensor:
+        r"""Scale regularization: enforces dimension-wise unit standard deviation."""
+        std_z = torch.sqrt(z.var(dim=0, unbiased=False) + 1e-6)
+        return torch.mean((self.target_std - std_z) ** 2)
 
     def _batch_variance_loss(self, z: torch.Tensor) -> torch.Tensor:
-        """Scale regularization: forces feature variance across the batch to be >= target_std."""
-        std_z = torch.sqrt(z.var(dim=0, unbiased=False) + 1e-4)
-        return torch.mean(F.relu(self.target_std - std_z))
+        """Backward compatibility alias for _scale_loss."""
+        return self._scale_loss(z)
 
     def _sliced_wasserstein_distance(self, z: torch.Tensor) -> torch.Tensor:
         """Shape regularization: 1D Sliced-Wasserstein distance against standard normal quantiles."""
         N, D = z.shape
+
+        # Center features and scale-normalize with stop-gradient to decouple shape from scale
+        mu = z.mean(dim=0, keepdim=True)
+        std = torch.sqrt(z.var(dim=0, unbiased=False, keepdim=True) + 1e-6)
+        z_norm = (z - mu) / (std.detach() + 1e-6)
+
         # Sample random projection vectors on unit hypersphere
         u = torch.randn(D, self.num_projections, device=z.device, dtype=z.dtype)
         u = F.normalize(u, p=2, dim=0)  # [D, M]
-        
-        # 1D slices: [N, M]
-        proj = z @ u
-        
-        # Standardize projections along each slice to isolate distribution shape from scale & location
-        proj_mean = proj.mean(dim=0, keepdim=True)
-        proj_std = torch.sqrt(proj.var(dim=0, unbiased=False, keepdim=True) + 1e-6)
-        proj_stdized = (proj - proj_mean) / proj_std
-        
-        sorted_proj, _ = torch.sort(proj_stdized, dim=0)  # [N, M]
-        
+
+        # 1D projected slices: [N, M] (no autograd per-slice re-standardization)
+        proj = z_norm @ u
+        sorted_proj, _ = torch.sort(proj, dim=0)  # [N, M]
+
         # Analytical standard normal N(0, 1) quantiles: Phi^{-1}((i - 0.5) / N)
+        # Evaluated strictly in float32 to prevent float16 erfinv tail saturation under AMP
         probs = (torch.arange(1, N + 1, device=z.device, dtype=torch.float32) - 0.5) / N
         gaussian_quantiles = (torch.erfinv(2.0 * probs - 1.0) * math.sqrt(2.0)).to(dtype=z.dtype)  # [N]
-        
+
         # L1 Wasserstein distance across all slices
         swd = F.l1_loss(sorted_proj, gaussian_quantiles.unsqueeze(-1).expand_as(sorted_proj))
         return swd
@@ -100,22 +119,35 @@ class VisRegLoss(nn.Module):
         projected_tokens: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         j_loss = self.jepa_loss(predictions, targets)
-        
+
         # Support flexible argument names (context_tokens, tokens, or projected_tokens)
-        reg_tokens = tokens if tokens is not None else (projected_tokens if projected_tokens is not None else context_tokens)
+        reg_tokens = (
+            tokens
+            if tokens is not None
+            else (projected_tokens if projected_tokens is not None else context_tokens)
+        )
         if reg_tokens is None:
             raise ValueError("VisRegLoss requires regularized token representations.")
 
         # Flatten across batch and patch dimensions: [N, D]
         z = reg_tokens.reshape(-1, reg_tokens.shape[-1])
-        
-        var_loss = self._batch_variance_loss(z)
+
+        center_loss = self._center_loss(z)
+        scale_loss = self._scale_loss(z)
         swd_loss = self._sliced_wasserstein_distance(z)
-        
-        total_loss = j_loss + self.var_weight * var_loss + self.swd_weight * swd_loss
+
+        total_loss = (
+            j_loss
+            + self.center_weight * center_loss
+            + self.scale_weight * scale_loss
+            + self.swd_weight * swd_loss
+        )
         return {
             "loss": total_loss,
             "jepa_loss": j_loss,
-            "var_loss": var_loss,
-            "swd_loss": swd_loss,
+            "center_loss": center_loss,
+            "scale_loss": scale_loss,
+            "shape_loss": swd_loss,
+            "swd_loss": swd_loss,  # Backward compatibility alias
+            "var_loss": scale_loss,  # Backward compatibility alias
         }

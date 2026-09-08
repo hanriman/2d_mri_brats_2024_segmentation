@@ -158,12 +158,18 @@ class JEPAMaskingTransform:
         # Guarantee exactly self.num_context_patches for uniform batch collation
         target_ctx_len = min(self.num_context_patches, len(all_non_target))
         if len(non_overlap_candidates) >= target_ctx_len:
-            chosen_ctx = non_overlap_candidates[:target_ctx_len]
+            # Unbiased stochastic sampling without replacement across candidate spatial block
+            chosen_ctx = np.random.choice(non_overlap_candidates, size=target_ctx_len, replace=False)
+            chosen_ctx = np.sort(chosen_ctx).tolist()
         else:
             chosen_set = set(non_overlap_candidates)
             supplement = [i for i in all_non_target if i not in chosen_set]
-            np.random.shuffle(supplement)
-            chosen_ctx = non_overlap_candidates + supplement[:target_ctx_len - len(non_overlap_candidates)]
+            if supplement:
+                needed = target_ctx_len - len(non_overlap_candidates)
+                sampled_supp = np.random.choice(supplement, size=needed, replace=False).tolist()
+                chosen_ctx = sorted(non_overlap_candidates + sampled_supp)
+            else:
+                chosen_ctx = sorted(non_overlap_candidates)
             
         return {
             "image": x,

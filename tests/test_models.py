@@ -6,6 +6,7 @@ from brats_jepa.models import (
     BraTS2DUNet,
     JEPAPredictor,
     JEPASegmentationModel,
+    MultiScaleViTSegmentationDecoder,
     SigRegJEPA,
     VisionTransformerEncoder2D,
     VisRegJEPA,
@@ -107,6 +108,75 @@ def test_visreg_jepa_projected_tokens():
     out = visreg(x, ctx_idx, tgt_idx)
     assert "projected_tokens" in out
     assert out["projected_tokens"].shape == (2, 80, 64)
+
+
+def test_vit_encoder_return_intermediate():
+    x = torch.randn(2, 4, 240, 240)
+    vit = VisionTransformerEncoder2D(img_size=240, patch_size=16, in_channels=4, embed_dim=128, depth=4, num_heads=4)
+    out, intermediates = vit(x, return_intermediate=True)
+    assert out.shape == (2, 225, 128)
+    assert len(intermediates) == 4
+    for inter in intermediates:
+        assert inter.shape == (2, 225, 128)
+
+
+def test_multiscale_vit_decoder():
+    B, N, D = 2, 225, 128
+    intermediates = [torch.randn(B, N, D) for _ in range(4)]
+    
+    # 1. Standard forward (no deep supervision)
+    decoder = MultiScaleViTSegmentationDecoder(in_dim=D, out_channels=1, deep_supervision=False)
+    logits = decoder(intermediates)
+    assert logits.shape == (B, 1, 240, 240)
+
+    # 2. Deep supervision forward
+    ds_decoder = MultiScaleViTSegmentationDecoder(in_dim=D, out_channels=1, deep_supervision=True)
+    ds_logits = ds_decoder(intermediates)
+    assert isinstance(ds_logits, list)
+    assert len(ds_logits) == 4
+    assert ds_logits[0].shape == (B, 1, 240, 240)
+    assert ds_logits[1].shape == (B, 1, 120, 120)
+    assert ds_logits[2].shape == (B, 1, 60, 60)
+    assert ds_logits[3].shape == (B, 1, 30, 30)
+
+
+def test_jepa_segmentation_model_multiscale(dummy_batch):
+    images = dummy_batch["image"]
+    
+    # 1. Full fine-tuning mode
+    model = JEPASegmentationModel(
+        img_size=240,
+        patch_size=16,
+        in_channels=4,
+        embed_dim=128,
+        encoder_depth=4,
+        num_heads=4,
+        out_channels=1,
+        decoder_type="multiscale",
+        freeze_encoder=False,
+    )
+    logits = model(images)
+    assert logits.shape == (2, 1, 240, 240)
+    loss = logits.sum()
+    loss.backward()
+    # Gradients should flow to both encoder and decoder
+    assert model.encoder.patch_embed.proj.weight.grad is not None
+    assert model.decoder.head.weight.grad is not None
+
+    # 2. Linear probing mode (frozen encoder)
+    model_frozen = JEPASegmentationModel(
+        img_size=240,
+        patch_size=16,
+        in_channels=4,
+        embed_dim=128,
+        encoder_depth=4,
+        num_heads=4,
+        out_channels=1,
+        decoder_type="multiscale",
+        freeze_encoder=True,
+    )
+    logits_frozen = model_frozen(images)
+    assert logits_frozen.shape == (2, 1, 240, 240)
 
 
 

@@ -1,6 +1,4 @@
 import argparse
-import json
-import time
 from pathlib import Path
 
 import numpy as np
@@ -8,10 +6,14 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from brats_jepa.config import CHECKPOINTS_DIR, DATA_DIR, LOGS_DIR, METRICS_DIR, ensure_directories
+from brats_jepa.config import CHECKPOINTS_DIR
 from brats_jepa.data import BraTS2DDataset
 from brats_jepa.metrics import compute_segmentation_metrics
-from brats_jepa.models import IJEPA, BraTS2DnnUNet, BraTS2DUNet, JEPASegmentationModel, SigRegJEPA, VisRegJEPA
+from brats_jepa.models import (
+    BraTS2DnnUNet,
+    BraTS2DUNet,
+    JEPASegmentationModel,
+)
 from brats_jepa.utils import get_device, get_logger, set_seed
 
 

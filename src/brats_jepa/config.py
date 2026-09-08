@@ -116,3 +116,20 @@ def ensure_directories(base_output_dir: Path | str | None = None):
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 
+
+def merge_config_with_args(config: dict[str, Any], args: Any) -> Any:
+    """
+    Merges a loaded YAML configuration dictionary with argparse Namespace.
+    Command-line arguments take precedence over YAML defaults.
+    """
+    args_dict = vars(args) if hasattr(args, "__dict__") else args
+    for k, v in config.items():
+        if isinstance(v, dict):
+            for sub_k, sub_v in v.items():
+                if sub_k in args_dict and args_dict[sub_k] is None:
+                    setattr(args, sub_k, sub_v)
+        else:
+            if k in args_dict and args_dict[k] is None:
+                setattr(args, k, v)
+    return args
+

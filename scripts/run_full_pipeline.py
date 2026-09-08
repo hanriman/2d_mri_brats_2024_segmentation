@@ -105,7 +105,7 @@ def main():
     total_sec = time.perf_counter() - start_all
     
     print("\n" + "="*85)
-    print(f"  MASTER PIPELINE COMPLETED SUCCESSFULLY!")
+    print("  MASTER PIPELINE COMPLETED SUCCESSFULLY!")
     print(f"  START TIME: {start_wall_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  END TIME:   {end_wall_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  TOTAL ELAPSED TIME: {total_sec/60:.2f} MINUTES ({total_sec:.2f} SECONDS)")

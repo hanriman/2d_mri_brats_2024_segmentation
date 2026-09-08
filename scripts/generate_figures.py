@@ -1,10 +1,12 @@
 import argparse
 import json
 from pathlib import Path
+
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-from brats_jepa.config import FIGURES_DIR, METRICS_DIR, ensure_directories
+
+from brats_jepa.config import FIGURES_DIR, METRICS_DIR
 
 
 def parse_args():

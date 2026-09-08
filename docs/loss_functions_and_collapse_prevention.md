@@ -55,19 +55,27 @@ The three architectures prevent collapse using fundamentally different theoretic
 
 ---
 
-### 2.3 VisReg JEPA: Decoupled Scale and Shape Geometry (Sliced-Wasserstein)
+### 2.3 VisReg JEPA: Decoupled Center, Scale, and Shape Optimal Transport Regularization
 
-* **Architecture**: Single-encoder (no EMA teacher), Predictor $\phi$.
-* **Anti-Collapse Paradigm**: Decoupled Scale-Shape Regularization (Wu, Balestriero, Levine, 2026).
+* **Architecture**: Single-encoder (no EMA teacher, no momentum buffers), Predictor $\phi$.
+* **Anti-Collapse Paradigm**: Decoupled Center-Scale-Shape Regularization (Wu, Balestriero, Levine, 2026).
 * **Mathematical Formulation**:
-  Gradients from characteristic function tests (like Epps–Pulley) can vanish when embeddings undergo extreme dimensional collapse. VISReg resolves this by decoupling the constraint into independent **Scale** and **Shape** objectives:
-  1. **Scale Constraint (Batch Variance Hinge)**:
-     $$\mathcal{L}_{\text{var}} = \frac{1}{D} \sum_{d=1}^D \max\left(0, \, 1.0 - \sqrt{\text{Var}_{b}(z_{b, d}) + \epsilon}\right)$$
-     Enforces that the standard deviation across the batch dimension ($dim=0$) is strictly $\ge 1.0$ for every feature channel.
-  2. **Shape Constraint (Sliced-Wasserstein Distance to Gaussian Quantiles)**:
-     Embeddings are projected along $M = 256$ random unit vectors $u_m \sim \mathbb{S}^{D-1}$. The sorted 1D projections $p_{m, (i)}$ are aligned directly to the theoretical standard normal inverse cumulative distribution function (quantiles) $\Phi^{-1}$:
-     $$\mathcal{L}_{\text{SWD}} = \frac{1}{M} \sum_{m=1}^M \frac{1}{N} \sum_{i=1}^N \left| p_{m, (i)} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right) \right|$$
-  $$\mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{pred}} + \lambda_{\text{var}} \mathcal{L}_{\text{var}} + \lambda_{\text{shape}} \mathcal{L}_{\text{SWD}}$$
+  Gradients from characteristic function tests (like Epps–Pulley) can suffer from vanishing gradients when embeddings undergo severe dimensional collapse. VISReg resolves this by decoupling the constraint into three independent and complementary geometric objectives:
+  1. **Center Regularization ($\mathcal{L}_{\text{center}}$)**:
+     Prevents the representation cloud from drifting away from the coordinate origin:
+     $$\mathcal{L}_{\text{center}} = \frac{1}{D} \|\boldsymbol{\mu}_Z\|_2^2, \qquad \boldsymbol{\mu}_Z = \frac{1}{N} \sum_{i=1}^N \mathbf{z}_i$$
+  2. **Scale Constraint ($\mathcal{L}_{\text{scale}}$)**:
+     $$\mathcal{L}_{\text{scale}} = \frac{1}{D} \sum_{d=1}^D (1 - \sigma_d)^2, \qquad \sigma_d = \sqrt{\text{Var}_{N}(\mathbf{z}_{:, d}) + \epsilon}$$
+     Forces the standard deviation of each individual embedding dimension across all batch tokens to strictly match $\gamma = 1.0$, preventing dimensional and point collapse.
+  3. **Shape Regularization ($\mathcal{L}_{\text{shape}}$, 1D Sliced-Wasserstein Distance)**:
+     Embeddings are centered and normalized with stop-gradient on standard deviation ($\tilde{\mathbf{z}} = (\mathbf{z} - \boldsymbol{\mu}_Z) / (\text{sg}(\boldsymbol{\sigma}) + \epsilon)$) to decouple shape optimization from scale optimization.
+     Normalized embeddings are projected along $M = 256$ random unit vectors $\mathbf{u}_m \sim \mathbb{S}^{D-1}$. Slices are **not** re-standardized with autograd per 1D projection, preserving the high-dimensional covariance structure.
+     Projections are sorted along each 1D ray ($p_{m, (i)} = \tilde{\mathbf{z}}_{(i)}^\top \mathbf{u}_m$) and aligned to theoretical standard normal quantiles $q_i^* = \Phi^{-1}\left(\frac{i - 0.5}{N}\right) = \sqrt{2} \, \text{erf}^{-1}\left(2 \frac{i - 0.5}{N} - 1\right)$:
+     $$\mathcal{L}_{\text{shape}} = \frac{1}{M N} \sum_{m=1}^M \sum_{i=1}^N \left| p_{m, (i)} - q_i^* \right|$$
+  $$\mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{pred}} + \lambda_{\text{center}} \mathcal{L}_{\text{center}} + \lambda_{\text{scale}} \mathcal{L}_{\text{scale}} + \lambda_{\text{shape}} \mathcal{L}_{\text{shape}}$$
+
+* **AMP Precision Guarantee**:
+  Quantile evaluation and inverse error function evaluation ($\text{erf}^{-1}$) are performed strictly in `torch.float32`. This avoids float16 underflow/overflow at the asymptotic distribution tails ($p \to 0$ and $p \to 1$) under automatic mixed precision.
 
 ---
 
@@ -101,7 +109,7 @@ Loss
  │   \________
  │            \________ (Plateaus ~ 1.5 - 2.0)
  │
- │  VISReg (Batch hinge active from Step 1, monotonic descent)
+ │  VISReg (Scale regularization active from Step 1, monotonic descent)
  │  \
  │   \________
  │            \________ (Plateaus ~ 0.8 - 1.2)
@@ -118,7 +126,7 @@ Loss
 | :--- | :--- | :--- | :--- |
 | **Target Distribution** | Non-stationary (EMA moving target) | Stationary (same encoder, regularized) | Stationary (same encoder, regularized) |
 | **Loss Trajectory** | U-shaped (0.26 $\to$ 0.008 $\to$ 0.142) | Monotonically decreasing | Monotonically decreasing |
-| **Early Variance Collapse?** | Yes, transiently at Epochs 2–4 | Forbidden by Epps–Pulley penalty | Forbidden by Batch Variance Hinge |
+| **Early Variance Collapse?** | Yes, transiently at Epochs 2–4 | Forbidden by Epps–Pulley penalty | Forbidden by Scale Regularization ($\mathcal{L}_{\text{scale}}$) |
 | **Optimal Checkpoint** | **Final mature epoch (Epoch 50)** | **Lowest validation loss** or final | **Lowest validation loss** or final |
 
 ---

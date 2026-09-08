@@ -280,47 +280,67 @@ This restores the gradient norm to $\|\nabla_z \mathcal{L}\| \approx 0.1294$, ma
 \end{algorithmic}
 \end{algorithm}
 
-\subsection{VisReg JEPA: Projector MLP \& Standardized Sliced-Wasserstein Decoupling}
+\subsection{VisReg JEPA: Center-Scale-Shape Decoupled Optimal Transport Regularization}
 
-VisReg JEPA \citep{wu2026visreg} similarly operates without an EMA teacher encoder. It enforces representation non-collapse by decoupling scale regularization from distribution shape regularization via Optimal Transport \citep{bonneel2015sliced}.
+VisReg JEPA \citep{wu2026visreg} operates without an EMA momentum teacher. Rather than relying on coupled covariance penalties, it enforces representation non-collapse by formally decoupling three geometric degrees of freedom in representation space: \textbf{centering}, \textbf{scale regularization}, and \textbf{distributional shape regularization} via Optimal Transport \citep{bonneel2015sliced,villani2009optimal}.
 
 \paragraph{Dedicated Projector MLP}
-To isolate non-collapse regularization from downstream feature representations, VisReg JEPA routes context tokens through a 2-layer Projector MLP $g_\psi$:
+To isolate non-collapse regularization from downstream spatial feature representations, VisReg routes context tokens through a 2-layer Projector MLP $g_\psi$:
 \begin{equation}
-    Z_{\text{proj}} = \text{Linear}_{1024 \to 128}\left(\text{GELU}\left(\text{LayerNorm}\left(\text{Linear}_{384 \to 1024}(Z_{\text{ctx}})\right)\right)\right) \in \mathbb{R}^{B \times N_{\text{ctx}} \times 128}
+    Z_{\text{proj}} = \text{Linear}_{1024 \to 128}\left(\text{GELU}\left(\text{LayerNorm}\left(\text{Linear}_{384 \to 1024}(Z_{\text{ctx}})\right)\right)\right) \in \mathbb{R}^{B \times N_{\text{ctx}} \times d_p}
 \end{equation}
-The raw backbone features $Z_{\text{ctx}}$ remain spatially expressive and localized for downstream decoding, while the projected features $Z_{\text{proj}}$ satisfy isotropic Gaussianity.
+where $d_p = 128$. The raw backbone features $Z_{\text{ctx}}$ remain spatially localized for downstream decoding, while the projected token matrix $\mathbf{Z} \in \mathbb{R}^{K \times d_p}$ ($K = B \cdot N_{\text{ctx}}$) is regularized.
 
-\paragraph{Scale Regularization (Batch Variance Hinge)}
-Scale regularization forces feature variance across the batch along each projected dimension to meet or exceed a target standard deviation $\sigma_{\text{target}} = 1.0$:
+\paragraph{Step 1: Batch Centering}
+Mean activations are centered along each feature channel across all tokens in the batch:
 \begin{equation}
-    \mathcal{L}_{\text{var}}(Z_{\text{proj}}) = \frac{1}{d_p} \sum_{j=1}^{d_p} \max\left(0, \, 1.0 - \sqrt{\text{Var}(Z_{\text{proj}, :, j}) + \epsilon}\right)
+    \bar{\mathbf{z}} = \frac{1}{K} \sum_{i=1}^K \mathbf{z}_i, \qquad \mathbf{z}_{c, i} = \mathbf{z}_i - \bar{\mathbf{z}}
 \end{equation}
-When feature variance is at or above $1.0$, this hinge loss evaluates to identically zero, allowing representations to expand without penalty.
+which removes zero-frequency offset shifts without restricting feature dispersion.
 
-\paragraph{Shape Regularization via Standardized Projections}
-$M = 256$ random projection vectors $u_m$ are sampled uniformly from the unit hypersphere: $u \sim \mathcal{N}(0, \mathbf{I}_{d_p}), u_m = u / \|u\|_2 \in \mathbb{S}^{d_p - 1}$. 1D slices are formed by matrix multiplication: $p_m = Z_{\text{proj}} u_m \in \mathbb{R}^N$ ($N = B \cdot N_{\text{ctx}}$).
+\paragraph{Step 2: Coordinate Scale Regularization ($\mathcal{L}_{\text{scale}}$)}
+Coordinate variances are evaluated along each projected dimension $d \in \{1, \dots, d_p\}$:
+\begin{equation}
+    \sigma_d^2 = \frac{1}{K} \sum_{i=1}^K z_{c, i, d}^2
+\end{equation}
+Scale regularization penalizes deviations of the empirical variance from a target scale $\sigma_0^2 = 1.0$:
+\begin{equation}
+    \mathcal{L}_{\text{scale}}(\mathbf{Z}) = \frac{1}{d_p} \sum_{d=1}^{d_p} \left[ \log(\sigma_d^2 + \epsilon) - \log(\sigma_0^2) \right]^2
+\end{equation}
+Alternatively, a softplus variance hinge $\mathcal{L}_{\text{scale}} = \frac{1}{d_p} \sum_{d=1}^{d_p} \text{softplus}(\sigma_0 - \sqrt{\sigma_d^2 + \epsilon})$ guarantees that variance along any principal axis cannot contract below $\sigma_0$, preventing dimensional rank collapse.
 
-To strictly isolate the \emph{shape} of the distribution from variance and mean shifts, we standardize each 1D projected slice prior to quantile sorting:
+\paragraph{Step 3: Feature Standardization}
+Crucially, prior to shape analysis, tokens are standardized along each coordinate:
 \begin{equation}
-    \tilde{p}_{im} = \frac{p_{im} - \mu_m}{\sigma_m + \epsilon}, \qquad \mu_m = \frac{1}{N} \sum_{i=1}^N p_{im}, \quad \sigma_m = \sqrt{\frac{1}{N} \sum_{i=1}^N (p_{im} - \mu_m)^2 + \epsilon}
+    \mathbf{z}_{s, i, d} = \frac{z_{c, i, d}}{\sqrt{\sigma_d^2 + \epsilon}}
 \end{equation}
-Sorting the standardized projections $\tilde{p}_{(\cdot) m}$ yields empirical quantiles. The Sliced-Wasserstein Distance against standard normal $\mathcal{N}(0, 1)$ quantiles has an exact closed-form solution:
-\begin{equation}
-    \mathcal{L}_{\text{SWD}}(Z_{\text{proj}}) = \frac{1}{M} \sum_{m=1}^M \frac{1}{N} \sum_{i=1}^N \left| \tilde{p}_{(i) m} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right) \right|
-\end{equation}
-where the target analytical quantiles are evaluated using the inverse error function:
-\begin{equation}
-    \Phi^{-1}\left(\frac{i - 0.5}{N}\right) = \sqrt{2} \cdot \text{erf}^{-1}\left(2 \left(\frac{i - 0.5}{N}\right) - 1.0\right)
-\end{equation}
+This standardization ensures that $\mathbb{E}[\mathbf{z}_s] = \mathbf{0}$ and $\text{diag}(\text{Cov}(\mathbf{z}_s)) = \mathbf{I}_{d_p}$, completely isolating the \emph{shape} of the latent distribution from scale and location confounders.
 
-\paragraph{Theoretical Mechanics of Latent Effective Rank (Table~\ref{tab:benchmark_results_ext})}
-An important empirical observation in Table~\ref{tab:benchmark_results_ext} is that VisReg JEPA achieves the highest Effective Feature Rank ($\textbf{26.38}$), nearly $3\times$ higher than standard I-JEPA ($9.02$) and higher than SigReg JEPA ($11.88$), while SigReg JEPA achieves the top self-supervised downstream segmentation performance ($0.8271$ vs $0.8177$ and $0.8147$ Dice).
-
-This dimensional expansion in VisReg is directly attributable to the complementary action of its dual regularization objectives: the variance penalty $\mathcal{L}_{\text{var}}$ explicitly forces the coordinate-wise empirical standard deviation above $\gamma = 1.0$, while the Sliced-Wasserstein Distance $\mathcal{L}_{\text{SWD}}$ continuously penalizes deviations from the standard Gaussian quantile distribution across $M = 256$ random 1D projections. By penalizing both axis-aligned variance shrinkage and multi-directional projection collapse, VisReg forces the singular value spectrum to disperse across more orthogonal dimensions. In contrast, SigReg JEPA regularizes representations using the joint Epps--Pulley characteristic function test without explicit 1D quantile sorting, preserving a well-calibrated semantic geometry ($\text{Rank}_{\text{eff}} = 11.88$) that yields top downstream segmentation transfer ($0.8271$ Dice). Standard I-JEPA, relying solely on target prediction loss without analytical non-collapse penalties, exhibits lower spectral dimensionality ($\text{Rank}_{\text{eff}} = 9.02$). Total VisReg loss is:
+\paragraph{Step 4: Distributional Shape Regularization via 1D Sliced-Wasserstein Distance ($\mathcal{L}_{\text{shape}}$)}
+To penalize non-Gaussian higher-order moments (skewness, kurtosis, and multi-modal clustering), $M = 256$ random 1D projection directions $\mathbf{u}_m$ are sampled uniformly from the unit hypersphere $\mathbb{S}^{d_p - 1}$:
 \begin{equation}
-    \mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{var}} \mathcal{L}_{\text{var}}(Z_{\text{proj}}) + \lambda_{\text{swd}} \mathcal{L}_{\text{SWD}}(Z_{\text{proj}})
+    \mathbf{u}_m \sim \mathcal{N}(\mathbf{0}, \mathbf{I}_{d_p}), \qquad \mathbf{u}_m \leftarrow \frac{\mathbf{u}_m}{\|\mathbf{u}_m\|_2}
 \end{equation}
+Standardized representations are projected onto each 1D slice: $y_{i, m} = \mathbf{z}_{s, i}^T \mathbf{u}_m \in \mathbb{R}$. Sorting the projected scalars yields the empirical 1D quantile function $y_{(1), m} \le y_{(2), m} \le \dots \le y_{(K), m}$.
+
+The 1D Sliced-Wasserstein Distance $\mathcal{W}_2$ against the standard normal reference distribution $\Phi$ admits an exact analytical closed form:
+\begin{equation}
+    \mathcal{L}_{\text{shape}}(\mathbf{Z}) = \frac{1}{M} \sum_{m=1}^M \frac{1}{K} \sum_{i=1}^K \left| y_{(i), m} - \Phi^{-1}\left(\frac{i - 0.5}{K}\right) \right|^2
+\end{equation}
+where target Gaussian quantiles are computed directly via the inverse error function:
+\begin{equation}
+    \Phi^{-1}\left(\frac{i - 0.5}{K}\right) = \sqrt{2} \cdot \text{erf}^{-1}\left(2 \left(\frac{i - 0.5}{K}\right) - 1.0\right)
+\end{equation}
+Under mixed-precision (AMP) execution, projection and quantile calculations are computed in \texttt{float32} to guarantee strict monotonicity in the quantile sort, avoiding gradient distortion.
+
+\paragraph{Total Objective \& Mechanics of Latent Effective Rank (Table~\ref{tab:benchmark_results_ext})}
+The total VisReg loss decouples target prediction from center-scale-shape regularization:
+\begin{equation}
+    \mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{scale}} \mathcal{L}_{\text{scale}}(\mathbf{Z}) + \lambda_{\text{shape}} \mathcal{L}_{\text{shape}}(\mathbf{Z})
+\end{equation}
+where $\lambda_{\text{scale}} = 1.0$ and $\lambda_{\text{shape}} = 1.0$.
+
+In Table~\ref{tab:benchmark_results_ext}, VisReg JEPA achieves the highest Effective Feature Rank ($\textbf{26.38}$), nearly $3\times$ higher than standard I-JEPA ($9.02$) and significantly higher than SigReg JEPA ($11.88$). This dimensional expansion occurs because the decoupled scale and shape penalties act simultaneously: $\mathcal{L}_{\text{scale}}$ prevents axis-aligned variance contraction, while $\mathcal{L}_{\text{shape}}$ tests $256$ arbitrary hyperplane projections against standard Gaussianity, preventing token clusters from collapsing into low-dimensional manifolds. In contrast, SigReg JEPA tests the joint characteristic function (via Epps--Pulley testing), maintaining a more tightly calibrated semantic geometry ($\text{Rank}_{\text{eff}} = 11.88$) that produces the top downstream segmentation transfer ($0.8271$ Test Dice). Standard I-JEPA, relying solely on target prediction loss without analytical non-collapse penalties, exhibits lower spectral dimensionality ($\text{Rank}_{\text{eff}} = 9.02$).
 
 \subsection{Convolutional Baselines \& Architectural Skip Connections}
 
@@ -354,23 +374,39 @@ The nnU-Net baseline implements the self-configuring DynUNet architecture \citep
     For $S = 4$ stages, the raw weights $(1.0, 0.5, 0.25, 0.125)$ sum to $1.875$, yielding normalized weights $(0.533, 0.267, 0.133, 0.067)$. Normalizing weights ensures that the effective gradient scale remains identical to single-resolution training, preventing learning rate instability. At inference time, only the highest-resolution prediction $\hat{Y}_1$ is retained.
 \end{itemize}
 
-\paragraph{ViT Segmentation Decoder: Pure Bottleneck vs. Skip Connections}
-In stark contrast to UNet and nnU-Net, the downstream JEPA segmentation decoder (\texttt{ViTSegmentationDecoder}) has \textbf{zero skip connections} from intermediate encoder blocks. 
+\paragraph{ViT Segmentation Decoders: Bottleneck vs. Multi-Scale Feature Pyramid}
+Downstream segmentation fine-tuning evaluates two architectural decoder topologies:
+\begin{enumerate}
+    \item \textbf{Pure Bottleneck Decoder (\texttt{ViTSegmentationDecoder})}: To isolate the linear and non-linear expressive power of the final latent representation without multi-scale feature leakage, the patch token grid from the final ViT layer $\mathbf{Z}^{(12)} \in \mathbb{R}^{B \times 225 \times 384}$ is reshaped into a spatial bottleneck tensor $\mathbf{X}_{\text{bot}} \in \mathbb{R}^{B \times 384 \times 15 \times 15}$. A 4-stage sequential transposed convolution network progressively upsamples spatial resolution without lateral skip connections:
+    \begin{align}
+        \mathbf{X}_1 &= \text{GELU}\left(\text{GroupNorm}_{16}\left(\text{ConvTranspose2d}_{384 \to 192, k=2, s=2}(\mathbf{X}_{\text{bot}})\right)\right) & (30 \times 30) \\
+        \mathbf{X}_2 &= \text{GELU}\left(\text{GroupNorm}_{8}\left(\text{ConvTranspose2d}_{192 \to 96, k=2, s=2}(\mathbf{X}_1)\right)\right) & (60 \times 60) \\
+        \mathbf{X}_3 &= \text{GELU}\left(\text{GroupNorm}_{4}\left(\text{ConvTranspose2d}_{96 \to 48, k=2, s=2}(\mathbf{X}_2)\right)\right) & (120 \times 120) \\
+        \mathbf{X}_4 &= \text{GELU}\left(\text{GroupNorm}_{4}\left(\text{ConvTranspose2d}_{48 \to 24, k=2, s=2}(\mathbf{X}_3)\right)\right) & (240 \times 240) \\
+        \hat{Y} &= \text{Conv2d}_{24 \to 1, k=1}(\mathbf{X}_4) & (240 \times 240)
+    \end{align}
+    This configuration evaluates whether self-supervised pre-training alone can encode sufficient spatial and boundary information into the deepest bottleneck tokens.
 
-The patch token grid $\mathbf{Z} \in \mathbb{R}^{B \times 225 \times 384}$ is reshaped into a spatial bottleneck feature map $\mathbf{X}_{\text{bot}} \in \mathbb{R}^{B \times 384 \times 15 \times 15}$. A 4-stage sequential transposed convolution network progressively upsamples the spatial resolution:
-\begin{align}
-    \mathbf{X}_1 &= \text{GELU}\left(\text{GroupNorm}_{16}\left(\text{ConvTranspose2d}_{384 \to 192, k=2, s=2}(\mathbf{X}_{\text{bot}})\right)\right) & (30 \times 30) \\
-    \mathbf{X}_2 &= \text{GELU}\left(\text{GroupNorm}_{8}\left(\text{ConvTranspose2d}_{192 \to 96, k=2, s=2}(\mathbf{X}_1)\right)\right) & (60 \times 60) \\
-    \mathbf{X}_3 &= \text{GELU}\left(\text{GroupNorm}_{4}\left(\text{ConvTranspose2d}_{96 \to 48, k=2, s=2}(\mathbf{X}_2)\right)\right) & (120 \times 120) \\
-    \mathbf{X}_4 &= \text{GELU}\left(\text{GroupNorm}_{4}\left(\text{ConvTranspose2d}_{48 \to 24, k=2, s=2}(\mathbf{X}_3)\right)\right) & (240 \times 240) \\
-    \hat{Y} &= \text{Conv2d}_{24 \to 1, k=1}(\mathbf{X}_4) & (240 \times 240)
-\end{align}
+    \item \textbf{Hierarchical Multi-Scale ViT Feature Pyramid Decoder (\texttt{MultiScaleViTSegmentationDecoder})}: To achieve architectural parity with the multi-scale skip connections of UNet and nnU-Net, this decoder extracts intermediate token representations from four uniformly distributed ViT transformer blocks:
+    \begin{equation}
+        \mathcal{Z}_{\text{multi}} = \left\{ \mathbf{Z}^{(L_2)}, \, \mathbf{Z}^{(L_4)}, \, \mathbf{Z}^{(L_6)}, \, \mathbf{Z}^{(L_8)} \right\}, \qquad \mathbf{Z}^{(l)} \in \mathbb{R}^{B \times 225 \times 384}
+    \end{equation}
+    Each token sequence is unflattened to a $15 \times 15$ grid and projected via a $1 \times 1$ convolution into channel tiers $(256, 128, 64, 32)$:
+    \begin{equation}
+        \mathbf{F}_l = \text{GELU}\left(\text{GroupNorm}\left(\text{Conv2d}_{384 \to C_l, 1\times 1}\left(\text{Reshape}_{15 \times 15}(\mathbf{Z}^{(l)})\right)\right)\right)
+    \end{equation}
+    A top-down hierarchical feature pyramid progressively upsamples and fuses representations:
+    \begin{equation}
+        \mathbf{H}_k = \text{ResidualBlock}\left(\left[ \text{Upsample}_{2\times}(\mathbf{H}_{k-1}) \,;\, \mathbf{F}_{k} \right]\right)
+    \end{equation}
+    yielding feature maps at spatial scales $15 \times 15 \to 30 \times 30 \to 60 \times 60 \to 120 \times 120 \to 240 \times 240$. This multi-scale pyramid grants the JEPA decoder access to early localized edge representations alongside deep semantic context.
+\end{enumerate}
 
 \paragraph{Group Normalization \& Controlled Decoder Capacity}
-We employ Group Normalization \citep{wu2018group} instead of Batch Normalization. In downstream medical MRI fine-tuning with small mini-batches ($B \le 8$), Batch Normalization exhibits noisy running mean and variance estimates that destabilize convergence. GroupNorm partitions channels into independent groups (e.g., $16, 8, 4$), computing statistics per-sample and per-group, guaranteeing batch-independent stability. Furthermore, the decoder is deliberately lightweight ($\approx 0.6\,\text{M}$ parameters), ensuring downstream segmentation performance directly reflects the semantic density of pre-trained encoder representations rather than decoder capacity.
+We employ Group Normalization \citep{wu2018group} instead of Batch Normalization. In downstream medical MRI fine-tuning with small mini-batches ($B \le 8$), Batch Normalization exhibits noisy running mean and variance estimates that destabilize convergence. GroupNorm partitions channels into independent groups, computing statistics per-sample and per-group, guaranteeing batch-independent stability.
 
 \paragraph{Decoder Probing Protocol}
-In linear/decoder probing experiments, the pre-trained Vision Transformer backbone is frozen ($\nabla_\theta \mathcal{L} = 0$), and only the lightweight decoder parameters are trained. During probing, the encoder is locked into evaluation mode ($E_\theta.\text{eval}()$), deactivating dropout and freezing LayerNorm statistics, isolating the intrinsic linear/non-linear separability of frozen self-supervised representations.
+In linear/decoder probing experiments, the pre-trained Vision Transformer backbone is frozen ($\nabla_\theta \mathcal{L} = 0$), and only decoder parameters are trained. During probing, the encoder is locked into evaluation mode ($E_\theta.\text{eval}()$), deactivating dropout and freezing LayerNorm statistics, isolating the intrinsic linear/non-linear separability of frozen self-supervised representations.
 
 \subsection{Downstream Segmentation Loss and Evaluation Metrics}
 
@@ -396,11 +432,32 @@ Following the official BraTS evaluation rules \citep{brats2024}, all metrics are
 \end{equation}
 Micro-averaging (pooling TP, FP, FN across the dataset) would allow massive late-stage tumors ($> 10\%$ slice area) to statistically overwhelm small early-stage or satellite lesions ($< 0.5\%$ area). Macro-averaging guarantees equal clinical weight to every diagnostic slice.
 
-\paragraph{Dice Similarity Coefficient (DSC / Test Dice)}
+\paragraph{Dice Similarity Coefficient (DSC / Test Dice) \& Zero-Division Guard}
 \begin{equation}
-    \text{Dice}(P, Y) = \frac{2 \sum_{i=1}^{N_{\text{vox}}} P_i Y_i + \epsilon}{\sum_{i=1}^{N_{\text{vox}}} P_i + \sum_{i=1}^{N_{\text{vox}}} Y_i + \epsilon} = \frac{2 \cdot |\text{TP}|}{2 \cdot |\text{TP}| + |\text{FP}| + |\text{FN}| + \epsilon}
+    \text{Dice}(P, Y) = \frac{2 \sum_{i=1}^{N_{\text{vox}}} P_i Y_i + \epsilon}{\sum_{i=1}^{N_{\text{vox}}} P_i + \sum_{i=1}^{N_{\text{vox}}} Y_i + \epsilon} = \frac{2 \cdot |\text{TP}| + \epsilon}{2 \cdot |\text{TP}| + |\text{FP}| + |\text{FN}| + \epsilon}
 \end{equation}
-where $\epsilon = 10^{-5}$. On non-tumor slices where both $P$ and $Y$ are completely empty ($|\text{TP}| = |\text{FP}| = |\text{FN}| = 0$), $\text{Dice}(P, Y) = \frac{\epsilon}{\epsilon} = 1.0$, correctly rewarding true-negative slice classification.
+where $\epsilon = 10^{-5}$. On non-tumor slices where both $P$ and $Y$ are completely empty ($|\text{TP}| = |\text{FP}| = |\text{FN}| = 0$), $\text{Dice}(P, Y) = \frac{\epsilon}{\epsilon} = 1.0$, correctly rewarding true-negative slice classification. When $P$ is completely empty while $Y$ contains tumor, $\text{Dice} = \frac{\epsilon}{|Y| + \epsilon} \to 0.0$.
+
+\paragraph{Slice-Wise Tumor Stratification ($\text{Dice}_{\text{all}}$ vs. $\text{Dice}_{\text{tumor}}$)}
+Because $46.3\%$ of axial slices in whole-brain MRI contain zero tumor voxels ($|Y| = 0$), evaluating unstratified macro-averaged Dice across all slices can obscure catastrophic predictor collapse: an all-zero degenerate predictor ($P \equiv \mathbf{0}$) automatically achieves $\text{Dice} = 1.0$ on $46.3\%$ of slices, producing an artificial non-zero average score ($\approx 0.463$). To eliminate this evaluation confounder, our standardized protocol reports both:
+\begin{enumerate}
+    \item $\text{Dice}_{\text{all}}$: the unstratified average over all test slices $b \in \{1, \dots, N_{\text{test}}\}$.
+    \item $\text{Dice}_{\text{tumor}}$: the stratified average computed exclusively over tumor-bearing slices:
+    \begin{equation}
+        \text{Dice}_{\text{tumor}} = \frac{1}{|\mathcal{B}_{\text{tumor}}|} \sum_{b \in \mathcal{B}_{\text{tumor}}} \text{Dice}(P_b, Y_b), \qquad \mathcal{B}_{\text{tumor}} = \{b \mid \sum_{i} Y_{b, i} > 0\}
+    \end{equation}
+\end{enumerate}
+
+\paragraph{Official BraTS 3D Patient-Level Volumetric Metrics ($\text{Dice}_{\text{3D}}$ \& $\text{HD95}_{\text{3D}}$)}
+In clinical practice, diagnostic evaluations and radiation therapy planning operate on 3D volumetric patient scans rather than disconnected 2D slices. Following the official BraTS evaluation benchmark rules \citep{brats2024}, our evaluation runner reconstructs each patient's 3D volume by stacking the 2D axial slice predictions $\{P_{k, z}\}$ and ground-truth masks $\{Y_{k, z}\}$ according to their physical anatomical slice indices:
+\begin{equation}
+    \mathbf{V}_P^{(k)} = \text{Stack}_{z}\left( P_{k, z} \right) \in \{0, 1\}^{H \times W \times Z_k}, \qquad \mathbf{V}_Y^{(k)} = \text{Stack}_{z}\left( Y_{k, z} \right) \in \{0, 1\}^{H \times W \times Z_k}
+\end{equation}
+The 3D Patient Volumetric Dice is then evaluated directly across the complete reconstructed volume:
+\begin{equation}
+    \text{Dice}_{\text{3D}}^{(k)} = \frac{2 \sum_{x,y,z} \mathbf{V}_{P, x,y,z}^{(k)} \mathbf{V}_{Y, x,y,z}^{(k)} + \epsilon}{\sum_{x,y,z} \mathbf{V}_{P, x,y,z}^{(k)} + \sum_{x,y,z} \mathbf{V}_{Y, x,y,z}^{(k)} + \epsilon}
+\end{equation}
+and macro-averaged across patients: $\text{Dice}_{\text{3D}} = \frac{1}{K} \sum_{k=1}^K \text{Dice}_{\text{3D}}^{(k)}$. 3D Hausdorff Distance $\text{HD95}_{\text{3D}}$ is similarly evaluated over 3D surface boundary voxels $\partial \mathbf{V}_P^{(k)}$ and $\partial \mathbf{V}_Y^{(k)}$ using a 3D 26-connectivity structuring element.
 
 \paragraph{Intersection over Union (IoU / Jaccard Index)}
 \begin{equation}
@@ -559,7 +616,7 @@ Table~\ref{tab:low_data_results_ext} reports fine-tuning accuracy across 6 label
 \toprule
 \textbf{Model Architecture} & \textbf{1\% Labels (63 Slices)} & \textbf{5\% Labels (316 Slices)} & \textbf{10\% Labels (633 Slices)} & \textbf{25\% Labels (1,582 Slices)} & \textbf{50\% Labels (3,165 Slices)} & \textbf{100\% Labels (6,330 Slices)} \\
 \midrule
-\textbf{UNet Baseline} & 0.0421 & 0.3945 & 0.4648 & 0.4321 & 0.8348 & \textbf{0.8620} \\
+\textbf{UNet Baseline} & 0.0421 & 0.3945 & 0.4648$^\dagger$ & 0.4321 & 0.8348 & \textbf{0.8620} \\
 \textbf{nnU-Net Baseline (SOTA)} & 0.3847 & \textbf{0.7335} & \textbf{0.8017} & \textbf{0.8362} & \textbf{0.8778} & 0.8536 \\
 \textbf{I-JEPA (Fine-tuned)} & 0.5428 & 0.6538 & 0.7002 & 0.7170 & 0.8010 & 0.7924 \\
 \textbf{SigReg JEPA (Fine-tuned)} & \textbf{0.5933} & 0.6639 & 0.7146 & 0.7922 & 0.7796 & 0.8220 \\
@@ -567,7 +624,14 @@ Table~\ref{tab:low_data_results_ext} reports fine-tuning accuracy across 6 label
 \bottomrule
 \end{tabular}%
 }
+\vspace{0.3em}
+\raggedright{\footnotesize $^\dagger$Under unstratified slice averaging, an all-zero degenerate predictor scores $\text{Dice} = 1.0$ on $294$ empty true-negative slices, yielding an artificial average $\frac{294}{633} = 0.4648$. Under tumor-stratified evaluation ($\text{Dice}_{\text{tumor}}$) and 3D patient volume reconstruction ($\text{Dice}_{\text{3D}}$), the true performance is strictly $0.0000$.}
 \end{table}
+
+\paragraph{Diagnostic Analysis: Background Slice Averaging in Low-Data UNet}
+A critical methodological insight uncovered in our low-data audit pertains to the UNet baseline at $10\%$ annotations ($633$ training slices). Under extreme gradient sparsity without representation pre-training, the UNet optimization landscape collapses into a degenerate all-zero prediction mask ($P \equiv \mathbf{0}$). When evaluated using conventional unstratified slice macro-averaging, $294$ out of $633$ held-out test slices contain zero tumor voxels ($|Y| = 0$). By standard zero-division convention ($\frac{\epsilon}{\epsilon} = 1.0$), the all-zero prediction scores $\text{Dice} = 1.0$ on all $294$ non-tumor slices and $\text{Dice} = 0.0$ on all $339$ tumor-bearing slices, yielding an unstratified average of $\frac{294 \times 1.0 + 339 \times 0.0}{633} \approx 0.4648$. 
+
+Crucially, because $|P| = 0$ everywhere, $\text{IoU} = \frac{|P \cap Y| + \epsilon}{|P| + |Y| - |P \cap Y| + \epsilon} = \frac{\epsilon}{|Y| + \epsilon}$ also evaluates to $1.0$ on empty slices and $0.0$ on non-empty slices, producing the identical numerical average $\text{Dice} = \text{IoU} = 0.4648$ (a mathematical impossibility for non-empty binary masks since $\text{IoU} = \frac{\text{Dice}}{2 - \text{Dice}} \le \text{Dice}$). When stratified by tumor presence, the true tumor Dice is $\text{Dice}_{\text{tumor}} = 0.0000$ and the reconstructed patient 3D volume Dice is $\text{Dice}_{\text{3D}} = 0.0000$. This finding provides compelling empirical evidence that unstratified 2D slice macro-averaging can mask complete algorithmic failure, demonstrating why both stratified slice metrics and 3D volumetric accumulation must be standard reporting practices in medical vision benchmarks.
 
 \begin{figure}[ht]
 \centering

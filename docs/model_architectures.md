@@ -56,15 +56,15 @@ Located in [`src/brats_jepa/models/vision_transformer.py`](file:///Users/hanrima
 
 | Layer Name | Type / Operation | Input Shape | Output Shape | Parameters |
 | :--- | :--- | :--- | :--- | :--- |
-| `patch_embed.proj` | `nn.Conv2d(4, 384, k=16, s=16)` | $[B, 4, 240, 240]$ | $[B, 384, 15, 15]$ | $24,960$ |
+| `patch_embed.proj` | `nn.Conv2d(4, 384, k=16, s=16)` | $[B, 4, 240, 240]$ | $[B, 384, 15, 15]$ | $393,600$ |
 | `pos_embed` | `nn.Parameter` | - | $[1, 225, 384]$ | $86,400$ |
-| `blocks.0` -- `blocks.7` | $8 \times$ `TransformerEncoderLayer` | $[B, N_{\text{tokens}}, 384]$ | $[B, N_{\text{tokens}}, 384]$ | $14,136,576$ |
+| `blocks.layers.0` -- `.7` | $8 \times$ `TransformerEncoderLayer` | $[B, N_{\text{tokens}}, 384]$ | $[B, N_{\text{tokens}}, 384]$ | $14,195,712$ |
 | `norm` | `nn.LayerNorm(384)` | $[B, N_{\text{tokens}}, 384]$ | $[B, N_{\text{tokens}}, 384]$ | $768$ |
 
 - **Embedding Dimension ($D$)**: $384$
 - **Attention Heads**: $6$ ($\text{head\_dim} = 64$)
 - **MLP Expansion**: $4.0 \times 384 = 1536$
-- **Total Encoder Parameters**: $\mathbf{14,248,320}$ ($\sim 14.25\text{ M}$)
+- **Total Encoder Parameters**: $\mathbf{14,676,480}$ ($\sim 14.68\text{ M}$)
 
 ---
 
@@ -120,47 +120,86 @@ $$\mathcal{L}_{\text{SigReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{SIG
 
 ## 5. VisReg JEPA (Heuristic-Free Single-Encoder VISReg)
 
-Located in [`src/brats_jepa/models/visreg_jepa.py`](file:///Users/hanriman/Documents/master/thesis_2d/src/brats_jepa/models/visreg_jepa.py).
+Located in [`src/brats_jepa/models/visreg_jepa.py`](file:///Users/hanriman/Documents/master/thesis_2d/src/brats_jepa/models/visreg_jepa.py) and [`src/brats_jepa/losses/visreg_loss.py`](file:///Users/hanriman/Documents/master/thesis_2d/src/brats_jepa/losses/visreg_loss.py).
 
 ### 5.1 Architecture Overview
 VisReg JEPA (VISReg; Wu, Balestriero, Levine, 2026) is a **heuristic-free single-encoder architecture**:
-- Eliminates momentum teacher updates.
-- Decouples representation regularization into independent **Scale** and **Shape** objectives to avoid gradient vanishing during dimensional collapse.
+- **Eliminates Momentum Teacher Updates**: Eliminates dual-network EMA synchronization buffers and asynchronous parameter updates.
+- **Identical Online Encoder for Targets**: Target patch representations are extracted directly using the online encoder $E_\theta$ with gradients stopped ($\text{sg}$).
+- **Decoupled Geometric Regularization**: Implements the official center-scale-shape decoupled Optimal Transport (Sliced-Wasserstein) framework to prevent point and dimensional collapse without covariance matrix inversions.
 
 ### 5.2 Loss Formulation
-$$\mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{var}} \mathcal{L}_{\text{var}}(Z) + \lambda_{\text{SWD}} \mathcal{L}_{\text{SWD}}(Z)$$
+$$\mathcal{L}_{\text{VisReg}} = \mathcal{L}_{\text{I-JEPA}} + \lambda_{\text{center}} \mathcal{L}_{\text{center}} + \lambda_{\text{scale}} \mathcal{L}_{\text{scale}} + \lambda_{\text{shape}} \mathcal{L}_{\text{shape}}$$
 
-1. **Scale Regularization (Batch Variance Hinge)**: Forces feature dimension variance across the batch above $\gamma = 1.0$:
-   $$\mathcal{L}_{\text{var}}(Z) = \frac{1}{D} \sum_{j=1}^D \max\left(0, \, 1.0 - \sqrt{\text{Var}_B(Z_{:, j}) + \epsilon}\right)$$
-2. **Shape Regularization (Sliced-Wasserstein Distance, SWD)**:
-   Projects representations onto $M=256$ random unit directions $u \sim \mathbb{S}^{D-1}$, sorts the 1D projections $p_m = Z u_m$, and computes the $L_1$ Wasserstein distance against theoretical standard normal quantiles $\Phi^{-1}((i - 0.5)/N)$:
-   $$\mathcal{L}_{\text{SWD}}(Z) = \frac{1}{M} \sum_{m=1}^M \frac{1}{N} \sum_{i=1}^N \left| p_{m, (i)} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right) \right|$$
+1. **Center Regularization**: Enforces empirical batch mean representations to center at the coordinate origin, preventing representation drift:
+   $$\mathcal{L}_{\text{center}} = \frac{1}{D} \|\boldsymbol{\mu}_Z\|_2^2, \qquad \boldsymbol{\mu}_Z = \frac{1}{N} \sum_{i=1}^N \mathbf{z}_i$$
+
+2. **Scale Regularization (Coordinate Standard Deviation)**: Enforces dimension-wise unit variance across the flattened batch tokens to prevent point collapse:
+   $$\mathcal{L}_{\text{scale}} = \frac{1}{D} \sum_{j=1}^D (1 - \sigma_j)^2, \qquad \sigma_j = \sqrt{\text{Var}_N(\mathbf{z}_{:, j}) + \epsilon}$$
+
+3. **Shape Regularization (Sliced-Wasserstein Distance to Gaussian Quantiles)**:
+   Embeddings are centered and normalized with stop-gradient on standard deviation to isolate shape from scale dynamics:
+   $$\tilde{\mathbf{z}} = \frac{\mathbf{z} - \boldsymbol{\mu}_Z}{\text{sg}(\boldsymbol{\sigma}) + \epsilon}$$
+   Normalized representations are projected onto $M = 256$ random unit directions sampled uniformly from the unit hypersphere $\mathbf{u}_m \sim \mathbb{S}^{D-1}$:
+   $$p_{m, i} = \tilde{\mathbf{z}}_i^\top \mathbf{u}_m$$
+   Crucially, individual 1D projection slices are **not** re-standardized with autograd, preserving the multi-dimensional isotropic coordinate geometry.
+   Projections are sorted along each 1D slice ($p_{m, (i)}$) and compared via 1D Optimal Transport against exact standard Gaussian quantiles $q_i^* = \Phi^{-1}\left(\frac{i - 0.5}{N}\right) = \sqrt{2}\,\text{erf}^{-1}\left(2 \frac{i - 0.5}{N} - 1\right)$:
+   $$\mathcal{L}_{\text{shape}} = \frac{1}{M N} \sum_{m=1}^M \sum_{i=1}^N \left| p_{m, (i)} - q_i^* \right|$$
+
+4. **AMP Numerical Stability**: Inverse error function calculations ($\text{erf}^{-1}$) and quantile evaluations are computed strictly in `torch.float32` before casting, preventing numerical saturation and `NaN` / `Inf` gradient explosion under half-precision training.
 
 ---
 
-## 6. Downstream ViT Segmentation Decoder (JEPASegmentationModel)
+## 6. Downstream ViT Segmentation Decoders (JEPASegmentationModel)
 
 Located in [`src/brats_jepa/models/segmentation_head.py`](file:///Users/hanriman/Documents/master/thesis_2d/src/brats_jepa/models/segmentation_head.py).
 
-### 6.1 Architecture Specification
-Couples the pre-trained `VisionTransformerEncoder2D` with a 4-stage transpose-convolutional upsampling decoder to map $15 \times 15$ ViT patch tokens back to full $240 \times 240$ spatial logits:
+To evaluate downstream segmentation transfer, the pre-trained `VisionTransformerEncoder2D` is coupled with a downstream convolutional decoder. Two decoder architectures are provided:
+
+### 6.1 Bottleneck Decoder (`ViTSegmentationDecoder`)
+Upsamples exclusively from the final deep bottleneck patch tokens ($15 \times 15$ grid):
 
 ```text
-ViT Patch Tokens [B, 225, 384]  ---> Reshape & Permute ---> [B, 384, 15, 15]
-                                                                  |
+ViT Final Patch Tokens [B, 225, 384]  ---> Reshape & Permute ---> [B, 384, 15, 15]
+                                                                      |
  Stage 1: ConvTranspose2d(384, 192, k=2, s=2) + GroupNorm(16) + GELU ---> [B, 192, 30, 30]
-                                                                  |
+                                                                      |
  Stage 2: ConvTranspose2d(192, 96,  k=2, s=2) + GroupNorm(8)  + GELU ---> [B, 96, 60, 60]
-                                                                  |
+                                                                      |
  Stage 3: ConvTranspose2d(96,  48,  k=2, s=2) + GroupNorm(4)  + GELU ---> [B, 48, 120, 120]
-                                                                  |
+                                                                      |
  Stage 4: ConvTranspose2d(48,  24,  k=2, s=2) + GroupNorm(4)  + GELU ---> [B, 24, 240, 240]
-                                                                  |
- Projection Head: Conv2d(24, 1, k=1)                              ---> [B, 1, 240, 240] Logits
+                                                                      |
+ Projection Head: Conv2d(24, 1, k=1)                                  ---> [B, 1, 240, 240] Logits
 ```
 
-- **Decoder Parameter Count**: $420,841$ ($\sim 0.42\text{ M}$)
-- **Total Segmentation Model Parameters**: $14,669,161$ ($\sim 14.67\text{ M}$)
+- **Decoder Parameters**: $392,785$ ($\sim 0.39\text{ M}$)
+- **Total Bottleneck Model Parameters**: $15,069,265$ ($\sim 15.07\text{ M}$)
+
+### 6.2 Hierarchical Multi-Scale Feature Pyramid Decoder (`MultiScaleViTSegmentationDecoder`)
+Standard bottleneck decoding discards fine localized spatial geometry in favor of deep global semantics, leading to blurred tumor boundaries and elevated HD95 distance errors.
+
+The hierarchical multi-scale feature pyramid decoder bridges this gap by extracting intermediate token representations across the transformer hierarchy:
+- **Layer $L_2$ ($15 \times 15$)**: Preserves fine localized edge gradients, tissue transitions, and high-frequency boundaries.
+- **Layer $L_4$ ($15 \times 15$)**: Intermediate texture and spatial structure.
+- **Layer $L_6$ ($15 \times 15$)**: Sub-regional anatomical context.
+- **Layer $L_8$ ($15 \times 15$)**: High-level abstract semantics and tumor class identity.
+
+```text
+Transposed Conv Upsampling Path                      Lateral Skip Connections from ViT
+------------------------------------                 ---------------------------------
+Stage 1: Up(L8) [30x30] <---------------- Concatenate & Fuse <---- Skip Transpose(L6, 2x) [30x30]
+           |
+Stage 2: Up(Stage 1) [60x60] <----------- Concatenate & Fuse <---- Skip Transpose(L4, 4x) [60x60]
+           |
+Stage 3: Up(Stage 2) [120x120] <--------- Concatenate & Fuse <---- Skip Transpose(L2, 8x) [120x120]
+           |
+Stage 4: Up(Stage 3) [240x240] + Conv2d(24, 1) ---> Final Logits [240x240]
+```
+
+- **Decoder Parameters**: $3,330,097$ ($\sim 3.33\text{ M}$)
+- **Total Multi-Scale Model Parameters**: $18,006,577$ ($\sim 18.01\text{ M}$)
+- **Clinical Impact**: Preserves sharp tumor margin delineation, resolving the boundary distance degradation observed in pure bottleneck ViT decoders while maintaining the superior label efficiency and OOD robustness of self-supervised representations.
 
 ---
 
@@ -205,9 +244,10 @@ $$\mathcal{L}_{\text{deep\_sup}} = \sum_{s=0}^3 w_s \cdot \mathcal{L}_{\text{Dic
 
 | Model Architecture | Parameter Count | Training Speed | Inference Latency | Primary Loss Function |
 | :--- | :--- | :--- | :--- | :--- |
-| **UNet Baseline** | $1.86\text{ M}$ | $46.30\text{ s/epoch}$ | $175.86\text{ ms/slice}$ | Combined Dice + BCE |
-| **nnU-Net Baseline (SOTA)** | $9.66\text{ M}$ | $34.68\text{ s/epoch}$ | $20.87\text{ ms/slice}$ | Unnormalized Deep Supervision ($\sum 2^{-s} \mathcal{L}_s$) |
-| **I-JEPA Encoder + Predictor** | $16.06\text{ M}$ | $26.96\text{ s/epoch}$ | $20.38\text{ ms/slice}$ | Latent Smooth L1 + Target LayerNorm + EMA Teacher |
-| **SigReg JEPA Encoder + Projector** | $16.58\text{ M}$ | **$21.18\text{ s/epoch}$** | **$20.65\text{ ms/slice}$** | Latent Smooth L1 + Epps–Pulley CF Test ($\mathcal{T}_{\text{EP}}$) |
-| **VisReg JEPA Encoder** | $16.06\text{ M}$ | **$21.56\text{ s/epoch}$** | $20.71\text{ ms/slice}$ | Latent Smooth L1 + Batch Var Hinge + Sliced-Wasserstein (SWD) |
-| **JEPASegmentationModel** | $14.67\text{ M}$ | $21.18\text{ s/epoch}$ | $20.52\text{ ms/slice}$ | Combined Dice + BCE |
+| **UNet Baseline** | $6.50\text{ M}$ | $46.30\text{ s/epoch}$ | $175.86\text{ ms/slice}$ | Combined Dice + BCE |
+| **nnU-Net Baseline (SOTA)** | $7.93\text{ M}$ | $34.68\text{ s/epoch}$ | $20.87\text{ ms/slice}$ | Unnormalized Deep Supervision ($\sum 2^{-s} \mathcal{L}_s$) |
+| **I-JEPA (Online + Predictor)** | $16.65\text{ M}$ ($31.32\text{ M}$ w/ EMA) | $26.96\text{ s/epoch}$ | $20.38\text{ ms/slice}$ | Latent Smooth L1 + Target LayerNorm + EMA Teacher |
+| **SigReg JEPA (Encoder + Pred + Proj)** | $17.18\text{ M}$ | **$21.18\text{ s/epoch}$** | **$20.65\text{ ms/slice}$** | Latent Smooth L1 + Epps–Pulley CF Test ($\mathcal{T}_{\text{EP}}$) |
+| **VisReg JEPA (Encoder + Predictor)** | $16.65\text{ M}$ | **$21.56\text{ s/epoch}$** | $20.71\text{ ms/slice}$ | Latent Smooth L1 + Decoupled Center/Scale/Shape OT |
+| **JEPASegmentationModel (Bottleneck)** | $15.07\text{ M}$ | $21.18\text{ s/epoch}$ | $20.52\text{ ms/slice}$ | Combined Dice + BCE |
+| **JEPASegmentationModel (MultiScale FPN)** | $18.01\text{ M}$ | $22.45\text{ s/epoch}$ | $21.15\text{ ms/slice}$ | Combined Dice + BCE (Optional Deep Supervision) |

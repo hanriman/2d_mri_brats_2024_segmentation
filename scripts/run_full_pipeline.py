@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument("--encoder_source", type=str, choices=["target", "context"], default="target",
                         help="Source encoder weights to load: target (EMA teacher) or context (online student)")
     parser.add_argument("--skip_latex", action="store_true", help="Skip LaTeX compilation")
+    parser.add_argument("--deterministic", action="store_true", help="Enforce strict determinism across all scripts")
     return parser.parse_args()
 
 def main():
@@ -53,6 +54,8 @@ def main():
     base_flags = []
     if args.amp:
         base_flags.append("--amp")
+    if args.deterministic:
+        base_flags.append("--deterministic")
     if args.metadata_csv:
         base_flags.extend(["--metadata_csv", args.metadata_csv])
     if args.output_dir:

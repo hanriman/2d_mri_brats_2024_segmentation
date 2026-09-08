@@ -46,6 +46,8 @@ def parse_args():
     parser.add_argument("--swd_metric", type=str, choices=["mse", "l1"], default="mse",
                         help="Sliced-Wasserstein distance metric for VISReg shape loss (default: mse for W_2^2)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--deterministic", action="store_true", default=False,
+                        help="Enforce strict cuDNN determinism (disables cuDNN benchmark)")
     return parser.parse_args()
 
 def main():
@@ -56,8 +58,8 @@ def main():
     set_seed(args.seed)
     device = get_device(args.device)
 
-    # Enable cuDNN benchmark for static-sized convolutions on CUDA
-    if device.type == "cuda":
+    # Enable cuDNN benchmark for static-sized convolutions on CUDA (unless strict determinism is requested)
+    if device.type == "cuda" and not args.deterministic:
         torch.backends.cudnn.benchmark = True
 
     # Output directory setup
@@ -159,6 +161,8 @@ def main():
     else:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
+    # Note on AMP device targeting: while inference autocast supports both CUDA and MPS,
+    # training with GradScaler is strictly restricted to CUDA due to variable backend stability on MPS.
     use_amp = (device.type == "cuda") and args.amp
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
     if use_amp:

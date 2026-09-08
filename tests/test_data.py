@@ -129,24 +129,6 @@ def test_select_patient_slices_few_candidates():
     assert len(rep) <= 2
 
 
-def test_zscore_normalize():
-    """Verify foreground Z-score normalization ignores zero background."""
-    from brats_jepa.data.transforms import ZScoreNormalize
-    normalizer = ZScoreNormalize()
-    x = torch.zeros(4, 32, 32)
-    # Foreground non-zero patch
-    x[:, 10:20, 10:20] = torch.randn(4, 10, 10) * 5.0 + 50.0
-    out = normalizer(x)
-    assert out.shape == x.shape
-    # Background must stay zero
-    assert (out[:, :5, :5] == 0).all()
-    # Foreground mean should be ~0 and std ~1
-    fg = out[:, 10:20, 10:20]
-    for c in range(4):
-        assert abs(fg[c].mean().item()) < 1e-4
-        assert abs(fg[c].std().item() - 1.0) < 1e-2
-
-
 def test_jepa_masking_contiguity():
     """Verify that context patches form a contiguous cluster with neighbor connectivity."""
     masking = JEPAMaskingTransform(img_size=240, patch_size=16, num_context_patches=96, contiguous_context=True)
@@ -163,7 +145,7 @@ def test_jepa_masking_contiguity():
         assert ctx_set.isdisjoint(tgt_set)
 
     # Check that the majority of context patches share at least one 4-connected neighbor in ctx
-    coords = set((idx // grid_w, idx % grid_w) for idx in ctx)
+    coords = {(idx // grid_w, idx % grid_w) for idx in ctx}
     connected_count = 0
     for r, c in coords:
         nbrs = [(r-1, c), (r+1, c), (r, c-1), (r, c+1)]

@@ -91,6 +91,8 @@ def parse_args():
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches for rapid smoke testing")
     parser.add_argument("--device", type=str, default="auto", help="Device")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--deterministic", action="store_true", default=False,
+                        help="Enforce strict cuDNN determinism (disables cuDNN benchmark)")
     return parser.parse_args()
 
 
@@ -103,8 +105,8 @@ def main():
     set_seed(args.seed)
     device = get_device(args.device)
 
-    # Enable cuDNN benchmark for static-sized convolutions on CUDA
-    if device.type == "cuda":
+    # Enable cuDNN benchmark for static-sized convolutions on CUDA (unless strict determinism is requested)
+    if device.type == "cuda" and not args.deterministic:
         torch.backends.cudnn.benchmark = True
 
     if args.output_dir:

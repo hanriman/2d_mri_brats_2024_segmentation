@@ -72,50 +72,6 @@ class RandomModalityDropout(torch.nn.Module):
         mask = torch.where(all_zero, fallback, mask)
         return x * mask
 
-class ZScoreNormalize(torch.nn.Module):
-    r"""
-    Channel-Wise Foreground Z-Score Intensity Normalization for Multi-Modal MRI.
-
-    Mathematical Rationale & Defense Context:
-    -----------------------------------------
-    1. Zero-Background Invariance:
-       In skull-stripped brain MRI, air background pixels (intensity 0) constitute 40-60%
-       of the 2D image matrix. Computing naive mean and standard deviation across all pixels
-       grossly artificially depresses the mean and inflates variance.
-       Following clinical neuro-imaging standards (Nyúl & Udupa, 1999; Menze et al., 2014),
-       normalization statistics are strictly calculated across the non-zero brain mask:
-           \mu_c = \frac{1}{|\Omega|} \sum_{x \in \Omega} I_c(x), \quad
-           \sigma_c = \sqrt{\frac{1}{|\Omega|} \sum_{x \in \Omega} (I_c(x) - \mu_c)^2}
-       where \Omega = \{x : I_c(x) > 0\}.
-
-    2. Numerical Stability:
-       A small \epsilon = 10^{-6} guard prevents division-by-zero on empty modality channels.
-    """
-    def __init__(self, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [C, H, W] or [B, C, H, W]"""
-        is_batched = x.dim() == 4
-        if not is_batched:
-            x = x.unsqueeze(0)
-        B, C, _H, _W = x.shape
-        out = torch.zeros_like(x)
-        for b in range(B):
-            for c in range(C):
-                ch = x[b, c]
-                mask = ch > 0
-                if mask.any():
-                    mean = ch[mask].mean()
-                    std = ch[mask].std()
-                    norm = (ch - mean) / (std + self.eps) if std > 0 else (ch - mean)
-                    norm[~mask] = 0.0
-                    out[b, c] = norm
-                else:
-                    out[b, c] = ch
-        return out.squeeze(0) if not is_batched else out
-
 
 class JEPAMaskingTransform:
     r"""

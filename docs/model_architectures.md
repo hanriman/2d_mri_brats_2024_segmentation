@@ -126,6 +126,7 @@ Located in [`src/brats_jepa/models/visreg_jepa.py`](file:///Users/hanriman/Docum
 VisReg JEPA (VISReg; Wu, Balestriero, Levine, 2026) is a **heuristic-free single-encoder architecture**:
 - **Eliminates Momentum Teacher Updates**: Eliminates dual-network EMA synchronization buffers and asynchronous parameter updates.
 - **Identical Online Encoder for Targets**: Target patch representations are extracted directly using the online encoder $E_\theta$ with gradients stopped ($\text{sg}$).
+- **Projector MLP**: Encoder features $h \in \mathbb{R}^{384}$ pass through a 2-layer MLP (`Linear(384, 1024) -> LayerNorm -> GELU -> Linear(1024, 128)`) to produce projected representations $z \in \mathbb{R}^{128}$ for Sliced-Wasserstein regularization, decoupling semantic representation learning from the regularizer constraints.
 - **Decoupled Geometric Regularization**: Implements the official center-scale-shape decoupled Optimal Transport (Sliced-Wasserstein) framework to prevent point and dimensional collapse without covariance matrix inversions.
 
 ### 5.2 Loss Formulation
@@ -213,7 +214,7 @@ Supervised 5-stage encoder-decoder convolutional network:
 - **Bottleneck**: $256 \to 512$
 - **Decoder Channels**: $512 \to 256 \to 128 \to 64 \to 32 \to 1$
 - **Skip Connections**: Concatenation of encoder feature maps at corresponding spatial resolutions.
-- **Parameters**: $1,863,201$ ($\sim 1.86\text{ M}$)
+- **Parameters**: $6,496,444$ ($\sim 6.50\text{ M}$)
 
 ---
 
@@ -229,14 +230,14 @@ State-of-the-art supervised baseline (Isensee et al., *Nature Methods* 2021) wra
 
 ### 8.2 Deep Supervision Multi-Scale Heads
 Outputs auxiliary logits at intermediate resolution levels during training:
-1. Head 0 (Main): $[B, 1, 240, 240]$ (Weight $w_0 = 1.0$)
-2. Head 1: $[B, 1, 120, 120]$ (Weight $w_1 = 0.5$)
-3. Head 2: $[B, 1, 60, 60]$ (Weight $w_2 = 0.25$)
-4. Head 3: $[B, 1, 30, 30]$ (Weight $w_3 = 0.125$)
+1. Head 0 (Main): $[B, 1, 240, 240]$ (Normalized weight $w_0 \approx 0.533$)
+2. Head 1: $[B, 1, 120, 120]$ (Normalized weight $w_1 \approx 0.267$)
+3. Head 2: $[B, 1, 60, 60]$ (Normalized weight $w_2 \approx 0.133$)
+4. Head 3: $[B, 1, 30, 30]$ (Normalized weight $w_3 \approx 0.067$)
 
-$$\mathcal{L}_{\text{deep\_sup}} = \sum_{s=0}^3 w_s \cdot \mathcal{L}_{\text{Dice+BCE}}(\hat{Y}_s, Y_s)$$
+$$\mathcal{L}_{\text{deep\_sup}} = \sum_{s=0}^3 w_s \cdot \mathcal{L}_{\text{Dice+BCE}}(\hat{Y}_s, Y_s), \qquad w_s = \frac{2^{-s}}{\sum_{j=0}^3 2^{-j}} \quad \left(\sum_{s=0}^3 w_s = 1.0\right)$$
 
-- **Parameters**: $9,655,908$ ($\sim 9.66\text{ M}$)
+- **Parameters**: $7,931,620$ ($\sim 7.93\text{ M}$)
 
 ---
 
@@ -245,9 +246,9 @@ $$\mathcal{L}_{\text{deep\_sup}} = \sum_{s=0}^3 w_s \cdot \mathcal{L}_{\text{Dic
 | Model Architecture | Parameter Count | Training Speed | Inference Latency | Primary Loss Function |
 | :--- | :--- | :--- | :--- | :--- |
 | **UNet Baseline** | $6.50\text{ M}$ | $46.30\text{ s/epoch}$ | $175.86\text{ ms/slice}$ | Combined Dice + BCE |
-| **nnU-Net Baseline (SOTA)** | $7.93\text{ M}$ | $34.68\text{ s/epoch}$ | $20.87\text{ ms/slice}$ | Unnormalized Deep Supervision ($\sum 2^{-s} \mathcal{L}_s$) |
+| **nnU-Net Baseline (SOTA)** | $7.93\text{ M}$ | $34.68\text{ s/epoch}$ | $20.87\text{ ms/slice}$ | Normalized Deep Supervision ($\sum w_s \mathcal{L}_s, \, \sum w_s = 1.0$) |
 | **I-JEPA (Online + Predictor)** | $16.65\text{ M}$ ($31.32\text{ M}$ w/ EMA) | $26.96\text{ s/epoch}$ | $20.38\text{ ms/slice}$ | Latent Smooth L1 + Target LayerNorm + EMA Teacher |
 | **SigReg JEPA (Encoder + Pred + Proj)** | $17.18\text{ M}$ | **$21.18\text{ s/epoch}$** | **$20.65\text{ ms/slice}$** | Latent Smooth L1 + Epps–Pulley CF Test ($\mathcal{T}_{\text{EP}}$) |
-| **VisReg JEPA (Encoder + Predictor)** | $16.65\text{ M}$ | **$21.56\text{ s/epoch}$** | $20.71\text{ ms/slice}$ | Latent Smooth L1 + Decoupled Center/Scale/Shape OT |
+| **VisReg JEPA (Encoder + Pred + Proj)** | $17.18\text{ M}$ | **$21.56\text{ s/epoch}$** | $20.71\text{ ms/slice}$ | Latent Smooth L1 + Decoupled Center/Scale/Shape OT |
 | **JEPASegmentationModel (Bottleneck)** | $15.07\text{ M}$ | $21.18\text{ s/epoch}$ | $20.52\text{ ms/slice}$ | Combined Dice + BCE |
 | **JEPASegmentationModel (MultiScale FPN)** | $18.01\text{ M}$ | $22.45\text{ s/epoch}$ | $21.15\text{ ms/slice}$ | Combined Dice + BCE (Optional Deep Supervision) |

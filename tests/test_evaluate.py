@@ -18,6 +18,7 @@ def test_evaluate_parse_args_defaults():
         assert args.encoder_source == "target"
         assert args.batch_size == 8
         assert args.device == "auto"
+        assert args.deterministic is False
 
 
 def test_evaluate_parse_args_custom():
@@ -27,6 +28,7 @@ def test_evaluate_parse_args_custom():
         "--encoder_source", "context",
         "--batch_size", "16",
         "--max_batches", "5",
+        "--deterministic",
     ]
     with patch.object(sys, "argv", test_args):
         args = parse_args()
@@ -34,6 +36,7 @@ def test_evaluate_parse_args_custom():
         assert args.encoder_source == "context"
         assert args.batch_size == 16
         assert args.max_batches == 5
+        assert args.deterministic is True
 
 
 def test_evaluate_low_data_parse_args():

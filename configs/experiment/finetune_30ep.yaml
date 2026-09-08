@@ -1,0 +1,10 @@
+# Downstream Segmentation Fine-tuning Experiment (30 Epochs)
+epochs: 30
+batch_size: 8
+lr: 1.0e-4
+p_drop: 0.25
+decoder_type: "bottleneck"
+encoder_source: "target"
+num_workers: 2
+cache_data: true
+amp: true

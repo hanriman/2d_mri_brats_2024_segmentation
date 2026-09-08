@@ -53,6 +53,7 @@ def parse_args():
                         help="Decoder architecture for downstream segmentation (overrides checkpoint if provided)")
     parser.add_argument("--encoder_source", type=str, default="target", choices=["target", "context"],
                         help="Which pre-trained encoder weights to evaluate representations for (default: target)")
+    parser.add_argument("--amp", action="store_true", help="Enable CUDA/MPS AMP (mixed precision)")
     parser.add_argument("--device", type=str, default="auto", help="Device")
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches for quick local smoke testing")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -63,6 +64,7 @@ def evaluate_segmentation_model(
     model: torch.nn.Module,
     test_loader: DataLoader,
     device: torch.device,
+    use_amp: bool = False,
     max_batches: int | None = None,
 ) -> dict[str, Any]:
     """
@@ -75,7 +77,7 @@ def evaluate_segmentation_model(
 
     # Warmup pass
     dummy_in = torch.randn(min(4, test_loader.batch_size or 4), 4, 240, 240, device=device)
-    with torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast(device_type=device.type, enabled=use_amp):
         _ = model(dummy_in)
 
     t0 = time.perf_counter()
@@ -88,7 +90,8 @@ def evaluate_segmentation_model(
             labels = batch["label"].to(device, non_blocking=True)
             eval_samples += images.shape[0]
 
-            logits = model(images)
+            with torch.amp.autocast(device_type=device.type, enabled=use_amp):
+                logits = model(images)
             m = compute_segmentation_metrics(logits, labels)
 
             dice_list.extend(m["dice_per_sample"])
@@ -152,6 +155,7 @@ def main():
 
     set_seed(args.seed)
     device = get_device(args.device)
+    use_amp = args.amp and (device.type in ["cuda", "mps"])
 
     # Enable cuDNN benchmark for static-sized convolutions on CUDA
     if device.type == "cuda":
@@ -173,6 +177,8 @@ def main():
 
     logger = get_logger("evaluate", logs_dir / "evaluate.log")
     logger.info(f"Running evaluation benchmark on device: {device}")
+    if use_amp:
+        logger.info("Automatic Mixed Precision (AMP) enabled for evaluation.")
     logger.info(f"Loading checkpoints from: {ckpt_dir}")
     logger.info(f"DataLoader settings: num_workers={args.num_workers}, cache_in_memory={args.cache_data}")
 
@@ -207,7 +213,7 @@ def main():
         unet.load_state_dict(ckpt["model_state_dict"])
         unet.eval()
 
-        m_dict = evaluate_segmentation_model(unet, test_loader, device, max_batches=args.max_batches)
+        m_dict = evaluate_segmentation_model(unet, test_loader, device, use_amp=use_amp, max_batches=args.max_batches)
 
         unet_json = metrics_dir / "unet_train_metrics.json"
         if not unet_json.exists():
@@ -247,7 +253,7 @@ def main():
         nnunet.load_state_dict(ckpt["model_state_dict"])
         nnunet.eval()
 
-        m_dict = evaluate_segmentation_model(nnunet, test_loader, device, max_batches=args.max_batches)
+        m_dict = evaluate_segmentation_model(nnunet, test_loader, device, use_amp=use_amp, max_batches=args.max_batches)
 
         nnunet_json = metrics_dir / "nnunet_train_metrics.json"
         if not nnunet_json.exists():
@@ -310,7 +316,8 @@ def main():
                     if args.max_batches and batch_idx >= args.max_batches:
                         break
                     images = batch["image"].to(device, non_blocking=True)
-                    tokens = encoder(images)
+                    with torch.amp.autocast(device_type=device.type, enabled=use_amp):
+                        tokens = encoder(images)
                     all_rep_tokens.append(tokens.detach().cpu())
 
             if all_rep_tokens:
@@ -335,7 +342,7 @@ def main():
             model.load_state_dict(ckpt["model_state_dict"])
             model.eval()
 
-            m_dict = evaluate_segmentation_model(model, test_loader, device, max_batches=args.max_batches)
+            m_dict = evaluate_segmentation_model(model, test_loader, device, use_amp=use_amp, max_batches=args.max_batches)
 
             ft_json = metrics_dir / f"finetuned_{type_name}_metrics.json"
             if not ft_json.exists():

@@ -77,7 +77,16 @@ def main():
     logger.info(f"Starting {args.model_type.upper()} pre-training on device: {device}")
     logger.info(f"DataLoader settings: num_workers={args.num_workers}, cache_in_memory={args.cache_data}")
 
-    masking_transform = JEPAMaskingTransform(img_size=240, patch_size=16)
+    context_block_size = tuple(getattr(args, "context_block_size", (14, 14)))
+    target_block_size = tuple(getattr(args, "target_block_size", (5, 5)))
+    masking_transform = JEPAMaskingTransform(
+        img_size=getattr(args, "img_size", 240),
+        patch_size=getattr(args, "patch_size", 16),
+        num_target_masks=getattr(args, "num_target_masks", 4),
+        context_block_size=context_block_size,
+        target_block_size=target_block_size,
+        num_context_patches=getattr(args, "num_context_patches", 96),
+    )
 
     metadata_path = Path(args.metadata_csv).resolve() if args.metadata_csv else get_metadata_path("brats_gli_2d")
     logger.info(f"Using dataset metadata from: {metadata_path}")

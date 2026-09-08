@@ -1,0 +1,8 @@
+# Self-Supervised Pre-training Experiment (50 Epochs)
+epochs: 50
+batch_size: 8
+lr: 1.0e-4
+p_drop: 0.25
+num_workers: 2
+cache_data: true
+amp: true

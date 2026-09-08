@@ -72,9 +72,13 @@ def select_patient_slices(candidates: list, slices_per_patient: int = 5) -> list
         pool_to_sample = remaining_pool
 
     if needed > 0 and len(pool_to_sample) > 0:
-        idxs = np.linspace(0, len(pool_to_sample) - 1, num=needed, dtype=int)
-        for idx in idxs:
-            selected.append(pool_to_sample[idx])
+        # Avoid duplicate index generation when needed > len(pool_to_sample)
+        if len(pool_to_sample) >= needed:
+            idxs = np.linspace(0, len(pool_to_sample) - 1, num=needed, dtype=int)
+            for idx in idxs:
+                selected.append(pool_to_sample[idx])
+        else:
+            selected.extend(pool_to_sample)
 
     # Ensure exactly slices_per_patient if possible
     if len(selected) < slices_per_patient and len(remaining_pool) > 0:

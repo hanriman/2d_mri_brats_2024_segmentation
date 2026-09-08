@@ -106,10 +106,16 @@ def compute_hd95_single(pred_bin: np.ndarray, target_bin: np.ndarray) -> float:
     return hd95
 
 
-def compute_hd95_3d(pred_vol_3d: np.ndarray, target_vol_3d: np.ndarray) -> float:
+def compute_hd95_3d(
+    pred_vol_3d: np.ndarray,
+    target_vol_3d: np.ndarray,
+    voxel_spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
+) -> float:
     r"""
-    95th Percentile Symmetric Hausdorff Distance (HD95) for 3D binary volumes [D, H, W] in voxel units.
+    95th Percentile Symmetric Hausdorff Distance (HD95) for 3D binary volumes [D, H, W] in physical millimeter units.
     Uses binary erosion with 3D 26-connectivity structuring element and cKDTree for O(N log N) speed.
+
+    voxel_spacing: (z_spacing, y_spacing, x_spacing) physical millimeter dimensions per voxel.
     """
     p_mask = (pred_vol_3d > 0).astype(bool)
     t_mask = (target_vol_3d > 0).astype(bool)
@@ -128,15 +134,19 @@ def compute_hd95_3d(pred_vol_3d: np.ndarray, target_vol_3d: np.ndarray) -> float
         pts_t = np.argwhere(t_mask)
 
     d, h, w = p_mask.shape
-    diag = float(np.sqrt(d**2 + h**2 + w**2))
+    scale = np.array(voxel_spacing, dtype=np.float64)
+    diag = float(np.sqrt((d * scale[0]) ** 2 + (h * scale[1]) ** 2 + (w * scale[2]) ** 2))
 
     if len(pts_p) == 0 or len(pts_t) == 0:
         return diag
 
-    tree_t = cKDTree(pts_t)
-    d_p2t, _ = tree_t.query(pts_p)
-    tree_p = cKDTree(pts_p)
-    d_t2p, _ = tree_p.query(pts_t)
+    scaled_pts_t = pts_t.astype(np.float64) * scale
+    scaled_pts_p = pts_p.astype(np.float64) * scale
+
+    tree_t = cKDTree(scaled_pts_t)
+    d_p2t, _ = tree_t.query(scaled_pts_p)
+    tree_p = cKDTree(scaled_pts_p)
+    d_t2p, _ = tree_p.query(scaled_pts_t)
 
     return float(max(np.percentile(d_p2t, 95), np.percentile(d_t2p, 95)))
 
@@ -270,6 +280,7 @@ def compute_patient_volume_metrics(
     slice_indices: list[int] | None = None,
     threshold: float = 0.5,
     from_logits: bool = True,
+    voxel_spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> dict[str, Any]:
     r"""
     Official 3D BraTS Patient-Level Volumetric Evaluation Benchmark (Baid et al., 2021).
@@ -406,20 +417,22 @@ def compute_patient_volume_metrics(
             elif not has_p or not has_t:
                 max_z = max(p_z)
                 h, w = sub_p.shape[1], sub_p.shape[2]
-                hd95_3d = float(np.sqrt((max_z + 1) ** 2 + h**2 + w**2))
+                scale = np.array(voxel_spacing, dtype=np.float64)
+                hd95_3d = float(np.sqrt(((max_z + 1) * scale[0]) ** 2 + (h * scale[1]) ** 2 + (w * scale[2]) ** 2))
             else:
                 if np.array_equal(sub_p, sub_t):
                     hd95_3d = 0.0
                 else:
-                    all_pts_p = np.vstack(pts_p_list)
-                    all_pts_t = np.vstack(pts_t_list)
+                    scale = np.array(voxel_spacing, dtype=np.float64)
+                    all_pts_p = np.vstack(pts_p_list) * scale
+                    all_pts_t = np.vstack(pts_t_list) * scale
                     tree_t = cKDTree(all_pts_t)
                     d_p2t, _ = tree_t.query(all_pts_p)
                     tree_p = cKDTree(all_pts_p)
                     d_t2p, _ = tree_p.query(all_pts_t)
                     hd95_3d = float(max(np.percentile(d_p2t, 95), np.percentile(d_t2p, 95)))
         else:
-            hd95_3d = compute_hd95_3d(sub_p, sub_t)
+            hd95_3d = compute_hd95_3d(sub_p, sub_t, voxel_spacing=voxel_spacing)
 
         per_patient[pid] = {
             "dice": dice_3d,

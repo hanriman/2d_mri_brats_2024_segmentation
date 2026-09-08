@@ -80,8 +80,10 @@ def evaluate_segmentation_model(
     with torch.no_grad(), torch.amp.autocast(device_type=device.type, enabled=use_amp):
         _ = model(dummy_in)
 
-    t0 = time.perf_counter()
+    total_forward_time = 0.0
     eval_samples = 0
+    is_cuda = (device.type == "cuda")
+
     with torch.no_grad():
         for batch_idx, batch in enumerate(test_loader):
             if max_batches and batch_idx >= max_batches:
@@ -90,8 +92,18 @@ def evaluate_segmentation_model(
             labels = batch["label"].to(device, non_blocking=True)
             eval_samples += images.shape[0]
 
+            # Synchronize CUDA to measure pure model execution time accurately (finding M3)
+            if is_cuda:
+                torch.cuda.synchronize()
+            t_fwd_start = time.perf_counter()
+
             with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                 logits = model(images)
+
+            if is_cuda:
+                torch.cuda.synchronize()
+            total_forward_time += (time.perf_counter() - t_fwd_start)
+
             m = compute_segmentation_metrics(logits, labels)
 
             dice_list.extend(m["dice_per_sample"])
@@ -121,8 +133,7 @@ def evaluate_segmentation_model(
                 else batch["slice_index"]
             )
 
-    infer_time = time.perf_counter() - t0
-    ms_per_slice = (infer_time / eval_samples) * 1000.0 if eval_samples > 0 else 0.0
+    ms_per_slice = (total_forward_time / eval_samples) * 1000.0 if eval_samples > 0 else 0.0
 
     # Official BraTS 3D Patient Volumetric Metric Accumulation
     vol_metrics = compute_patient_volume_metrics(

@@ -34,3 +34,19 @@ def test_evaluate_parse_args_custom():
         assert args.encoder_source == "context"
         assert args.batch_size == 16
         assert args.max_batches == 5
+
+
+def test_evaluate_low_data_parse_args():
+    from scripts.evaluate_low_data import parse_args as parse_low_data_args
+    test_args = [
+        "evaluate_low_data.py",
+        "--seeds", "42", "43", "44",
+        "--epochs", "5",
+        "--batch_size", "4",
+    ]
+    with patch.object(sys, "argv", test_args):
+        args = parse_low_data_args()
+        assert args.seeds == [42, 43, 44]
+        assert args.epochs == 5
+        assert args.batch_size == 4
+

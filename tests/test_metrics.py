@@ -232,3 +232,23 @@ def test_sparse_slices_patient_volume_metrics():
     assert 0.0 < res_shift["dice_3d"] < 1.0
     assert 1.0 <= res_shift["hd95_3d"] <= 3.0
 
+
+def test_hd95_anisotropic_voxel_spacing():
+    """Verify that physical voxel spacing scales 3D Euclidean distances accurately."""
+    from brats_jepa.metrics.segmentation_metrics import compute_hd95_3d
+
+    # Volume with single point shifted along z by 2 voxels
+    v1 = np.zeros((10, 20, 20), dtype=bool)
+    v2 = np.zeros((10, 20, 20), dtype=bool)
+    v1[2, 10, 10] = True
+    v2[4, 10, 10] = True  # delta_z = 2 voxels
+
+    # Isotropic: 2.0
+    hd_iso = compute_hd95_3d(v1, v2, voxel_spacing=(1.0, 1.0, 1.0))
+    assert abs(hd_iso - 2.0) < 1e-4
+
+    # Anisotropic: 5mm slice thickness -> 2 * 5.0 = 10.0 mm
+    hd_aniso = compute_hd95_3d(v1, v2, voxel_spacing=(5.0, 1.0, 1.0))
+    assert abs(hd_aniso - 10.0) < 1e-4
+
+

@@ -135,9 +135,22 @@ def main():
     elif args.model_type == "visreg_jepa":
         model = VisRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
         swd_m = getattr(args, "swd_metric", "mse")
-        loss_fn = VisRegLoss(loss_type="smooth_l1", var_weight=1.0, swd_weight=1.0, num_projections=256, swd_metric=swd_m).to(device)
+        scale_type = getattr(args, "scale_loss_type", "squared")
+        loss_fn = VisRegLoss(
+            loss_type="smooth_l1",
+            var_weight=1.0,
+            swd_weight=1.0,
+            num_projections=256,
+            swd_metric=swd_m,
+            scale_loss_type=scale_type,
+        ).to(device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    # Filter optimizer to trainable parameters only (finding H1).
+    # In I-JEPA, target encoder parameters have requires_grad=False and are updated strictly via EMA.
+    # Passing them to AdamW would unnecessarily allocate momentum/variance state buffers (~40% VRAM)
+    # and risk accidental gradient pollution if requires_grad is altered.
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=1e-4)
     warmup_epochs = min(5, max(1, args.epochs // 5)) if args.epochs >= 5 else 0
     if warmup_epochs > 0:
         warmup_sched = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=warmup_epochs)
@@ -198,8 +211,6 @@ def main():
                 current_step = (epoch - 1) * steps_per_epoch + batch_idx
                 momentum = 1.0 - (1.0 - 0.996) * 0.5 * (1.0 + math.cos(math.pi * current_step / max(1, total_steps)))
                 model.update_target_encoder(momentum=momentum)
-            else:
-                model.update_target_encoder()
             train_loss_sum += loss.item()
 
         scheduler.step()

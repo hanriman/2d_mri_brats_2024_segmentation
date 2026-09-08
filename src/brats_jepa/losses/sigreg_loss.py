@@ -1,4 +1,6 @@
 
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -25,12 +27,14 @@ class EppsPulleyGaussianityTest(nn.Module):
            \phi_0(t) = \exp(-t^2 / 2)
        under the Gaussian-weighted L2 metric:
            T_{EP} = N \int_{-\infty}^{\infty} |\hat{\phi}_N(t) - \phi_0(t)|^2 d\mu(t)
-       where d\mu(t) = \frac{1}{\sqrt{2\pi}} \exp(-t^2 / 2) dt.
+       where d\mu(t) = \frac{1}{\sqrt{2\pi}} \exp(-t^2 / 2) dt is the standard Gaussian measure.
 
     3. Numerical Quadrature & Symmetry:
        Because \phi_0(t) is even and real, symmetry across t \in [-t_max, t_max] allows
        integrating over [0, t_max] and doubling the weights (except at t=0 and t=t_max),
        yielding trapezoidal quadrature weights: w_k = 2 dt for interior knots, w_0 = w_{K-1} = dt.
+       Multiplying by \frac{1}{\sqrt{2\pi}} \exp(-t_k^2 / 2) completes the discrete representation
+       of d\mu(t).
 
     4. Gradient Scaling (Why multiply by N?):
        The derivative of the empirical characteristic function with respect to projection p_n is:
@@ -54,9 +58,12 @@ class EppsPulleyGaussianityTest(nn.Module):
         weights = torch.full((n_knots,), 2.0 * dt, dtype=torch.float32)
         weights[[0, -1]] = dt
         phi = torch.exp(-0.5 * t.square())
+        # Gaussian density normalization constant 1 / sqrt(2 * pi) ensuring int d\mu(t) = 1
+        # per Epps & Pulley (1983) and Balestriero & LeCun (2025)
+        norm_const = 1.0 / math.sqrt(2.0 * math.pi)
         self.register_buffer("t", t)
         self.register_buffer("phi", phi)
-        self.register_buffer("weights", weights * phi)
+        self.register_buffer("weights", weights * phi * norm_const)
 
     def forward(self, proj: torch.Tensor) -> torch.Tensor:
         """

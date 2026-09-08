@@ -218,16 +218,20 @@ def main():
 
         if avg_val_dice > best_dice:
             best_dice = avg_val_dice
-            save_name = f"best_finetuned_{args.model_type}.pt"
-            ckpt_path = ckpt_dir / save_name
-            torch.save({
+            payload = {
                 "epoch": epoch,
                 "model_type": args.model_type,
                 "decoder_type": args.decoder_type,
                 "model_state_dict": model.state_dict(),
                 "val_dice": best_dice,
                 "val_hd95": avg_val_hd95,
-            }, ckpt_path)
+            }
+            save_name = f"best_finetuned_{args.model_type}.pt"
+            ckpt_path = ckpt_dir / save_name
+            torch.save(payload, ckpt_path)
+            # Also save architecture-tagged checkpoint to preserve both bottleneck and multiscale runs
+            if args.decoder_type:
+                torch.save(payload, ckpt_dir / f"best_finetuned_{args.model_type}_{args.decoder_type}.pt")
             logger.info(f"===> Saved best fine-tuned {args.model_type} checkpoint (Dice: {best_dice:.4f}) to {save_name}")
 
     total_duration = time.perf_counter() - start_total_time

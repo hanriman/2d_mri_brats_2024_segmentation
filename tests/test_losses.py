@@ -198,4 +198,58 @@ def test_visreg_swd_metrics():
         VisRegLoss(swd_metric="invalid_metric")
 
 
+def test_ijepa_loss_target_detachment():
+    """Verify that IJEPALoss strictly isolates targets and never computes gradients for them."""
+    preds = [torch.randn(2, 20, 128, requires_grad=True)]
+    tgts = [torch.randn(2, 20, 128, requires_grad=True)]
+    loss_fn = IJEPALoss()
+    loss = loss_fn(preds, tgts)
+    loss.backward()
+    assert preds[0].grad is not None
+    assert tgts[0].grad is None, "Targets must NEVER receive gradients from IJEPALoss"
+
+
+def test_visreg_scale_loss_types():
+    """Verify both 'squared' (Wu et al., 2026) and 'hinge' formulations for VisReg scale loss."""
+    import pytest
+    preds = [torch.randn(4, 20, 128)]
+    tgts = [torch.randn(4, 20, 128)]
+
+    # 1. Expanded variance (std=2.0)
+    ctx_expanded = torch.randn(4, 200, 128) * 2.0
+
+    # 'squared' penalizes std > 1 (anchors strictly to 1.0)
+    loss_sq = VisRegLoss(scale_loss_type="squared")
+    res_sq = loss_sq(preds, tgts, ctx_expanded)
+    assert res_sq["scale_loss"].item() > 0.5
+
+    # 'hinge' only penalizes std < 1, so std=2.0 incurs zero scale loss
+    loss_hinge = VisRegLoss(scale_loss_type="hinge")
+    res_hinge = loss_hinge(preds, tgts, ctx_expanded)
+    assert res_hinge["scale_loss"].item() < 1e-4
+
+    # 2. Collapsed variance (std=0.2): both penalize std < 1
+    ctx_collapsed = torch.randn(4, 200, 128) * 0.2
+    assert loss_sq(preds, tgts, ctx_collapsed)["scale_loss"].item() > 0.5
+    assert loss_hinge(preds, tgts, ctx_collapsed)["scale_loss"].item() > 0.5
+
+    # 3. Invalid scale_loss_type raises ValueError
+    with pytest.raises(ValueError, match="Unknown scale_loss_type"):
+        VisRegLoss(scale_loss_type="invalid_type")
+
+
+def test_dice_bce_loss_empty_batch():
+    """Verify that CombinedDiceBCELoss handles an all-empty slice batch smoothly without NaNs."""
+    logits = torch.randn(4, 1, 240, 240, requires_grad=True)
+    labels = torch.zeros(4, 1, 240, 240)  # All empty non-tumor slices
+    loss_fn = CombinedDiceBCELoss()
+    loss = loss_fn(logits, labels)
+    assert not torch.isnan(loss)
+    assert not torch.isinf(loss)
+    loss.backward()
+    assert logits.grad is not None
+    assert not torch.isnan(logits.grad).any()
+
+
+
 

@@ -49,9 +49,14 @@ class IJEPALoss(nn.Module):
         
         loss = torch.tensor(0.0, device=predictions[0].device)
         for pred, tgt in zip(predictions, targets):
-            # Per official I-JEPA (Assran et al., 2023), only target is LayerNormed.
-            # Prediction is NOT LayerNormed so the predictor learns natural scale.
-            tgt_norm = F.layer_norm(tgt, (tgt.shape[-1],))
+            # Per official I-JEPA (Assran et al., CVPR 2023, Section 3.2):
+            # 1. Target representations s_y are produced by the EMA teacher (or stop-grad encoder)
+            #    and must NEVER receive backpropagation gradients. Explicitly detaching targets here
+            #    guarantees mathematical isolation even if an upstream caller inadvertently passes
+            #    targets with requires_grad=True.
+            # 2. Only target representations are LayerNormed; predictions \hat{s}_y remain unnormalized
+            #    so the online predictor learns to align with the standardized coordinate system.
+            tgt_norm = F.layer_norm(tgt.detach(), (tgt.shape[-1],))
             
             if self.loss_type == "l1":
                 block_loss = F.l1_loss(pred, tgt_norm)

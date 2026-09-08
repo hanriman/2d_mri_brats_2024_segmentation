@@ -61,6 +61,7 @@ class VisRegLoss(nn.Module):
         target_std: float = 1.0,
         var_weight: float | None = None,
         swd_metric: str = "mse",
+        scale_loss_type: str = "squared",
     ):
         super().__init__()
         self.jepa_loss = IJEPALoss(loss_type=loss_type)
@@ -73,6 +74,9 @@ class VisRegLoss(nn.Module):
         if swd_metric not in ("mse", "l1"):
             raise ValueError(f"Unknown swd_metric: {swd_metric}. Must be 'mse' or 'l1'.")
         self.swd_metric = swd_metric
+        if scale_loss_type not in ("squared", "hinge"):
+            raise ValueError(f"Unknown scale_loss_type: {scale_loss_type}. Must be 'squared' or 'hinge'.")
+        self.scale_loss_type = scale_loss_type
         # Backwards compatibility attribute
         self.var_weight = self.scale_weight
 
@@ -82,8 +86,27 @@ class VisRegLoss(nn.Module):
         return torch.mean(mu**2)
 
     def _scale_loss(self, z: torch.Tensor) -> torch.Tensor:
-        r"""Scale regularization: enforces dimension-wise unit standard deviation."""
+        r"""
+        Scale regularization: enforces coordinate-wise target standard deviation \gamma = 1.0.
+
+        Theoretical Rationale (Wu, Balestriero, & Levine, 2026, Section 3.1):
+        -----------------------------------------------------------------------
+        - 'squared' (Default / VISReg Paper):
+            \mathcal{L}_{\text{scale}} = \frac{1}{D} \sum_{d=1}^D (\gamma - \sigma_d)^2
+            Unlike VICReg's hinge (which only penalizes \sigma_d < 1), VISReg uses a two-sided
+            squared penalty. This anchors the coordinate-wise variance strictly to unit variance,
+            which is mathematically necessary because the shape loss matches projected features
+            against standard normal quantiles \mathcal{N}(0, 1). If variance were allowed to grow
+            unbounded (\sigma_d \gg 1), the scale and shape regularizers would exert opposing
+            gradient forces.
+        - 'hinge' (VICReg-style Alternative, Bardes et al., 2022):
+            \mathcal{L}_{\text{scale}} = \frac{1}{D} \sum_{d=1}^D \max(0, \gamma - \sigma_d)
+            Only penalizes dimensions that collapse below unit standard deviation, allowing
+            unbounded variance expansion.
+        """
         std_z = torch.sqrt(z.var(dim=0, unbiased=False) + 1e-6)
+        if self.scale_loss_type == "hinge":
+            return torch.mean(F.relu(self.target_std - std_z))
         return torch.mean((self.target_std - std_z) ** 2)
 
     def _batch_variance_loss(self, z: torch.Tensor) -> torch.Tensor:

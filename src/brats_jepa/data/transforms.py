@@ -72,21 +72,68 @@ class RandomModalityDropout(torch.nn.Module):
         mask = torch.where(all_zero, fallback, mask)
         return x * mask
 
+class ZScoreNormalize(torch.nn.Module):
+    r"""
+    Channel-Wise Foreground Z-Score Intensity Normalization for Multi-Modal MRI.
+
+    Mathematical Rationale & Defense Context:
+    -----------------------------------------
+    1. Zero-Background Invariance:
+       In skull-stripped brain MRI, air background pixels (intensity 0) constitute 40-60%
+       of the 2D image matrix. Computing naive mean and standard deviation across all pixels
+       grossly artificially depresses the mean and inflates variance.
+       Following clinical neuro-imaging standards (Nyúl & Udupa, 1999; Menze et al., 2014),
+       normalization statistics are strictly calculated across the non-zero brain mask:
+           \mu_c = \frac{1}{|\Omega|} \sum_{x \in \Omega} I_c(x), \quad
+           \sigma_c = \sqrt{\frac{1}{|\Omega|} \sum_{x \in \Omega} (I_c(x) - \mu_c)^2}
+       where \Omega = \{x : I_c(x) > 0\}.
+
+    2. Numerical Stability:
+       A small \epsilon = 10^{-6} guard prevents division-by-zero on empty modality channels.
+    """
+    def __init__(self, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: [C, H, W] or [B, C, H, W]"""
+        is_batched = x.dim() == 4
+        if not is_batched:
+            x = x.unsqueeze(0)
+        B, C, _H, _W = x.shape
+        out = torch.zeros_like(x)
+        for b in range(B):
+            for c in range(C):
+                ch = x[b, c]
+                mask = ch > 0
+                if mask.any():
+                    mean = ch[mask].mean()
+                    std = ch[mask].std()
+                    norm = (ch - mean) / (std + self.eps) if std > 0 else (ch - mean)
+                    norm[~mask] = 0.0
+                    out[b, c] = norm
+                else:
+                    out[b, c] = ch
+        return out.squeeze(0) if not is_batched else out
+
+
 class JEPAMaskingTransform:
     r"""
     Multi-Block Context and Target Masking Generator for Joint-Embedding Architectures.
 
     Mathematical Rationale & Defense Context:
     -----------------------------------------
-    1. Block Masking vs Point-Wise Pixel Masking:
+    1. Contiguous Block Masking vs Point-Wise Pixel Masking:
        Standard Masked Autoencoders (MAE) employ random point-wise patch masking (e.g. 75% uniform
        dropout). In 2D medical images, adjacent patches exhibit extreme spatial autocorrelation;
        missing individual patches can be easily interpolated via low-level edge continuity.
        JEPA instead samples large contiguous rectangular blocks:
-       - **Target Blocks**: 4 blocks of size 5x5 patches (25 patches each).
-       - **Context Block**: 1 block of size 14x14 patches (filtered to exclude target overlap).
-       Large block removal destroys low-level texture shortcuts, forcing the model to understand
-       high-level anatomical geometry, organ symmetry, and global tissue morphology.
+       - **Target Blocks**: 4 blocks of size 5x5 patches (25 patches each), sampled with
+         overlap control to maximize spatial diversity.
+       - **Context Block**: A contiguous 2D spatial cluster of 96 patches extracted via
+         4-connected breadth-first expansion, guaranteeing spatial coherence without target overlap.
+       Large contiguous block removal destroys low-level texture shortcuts, forcing the model to understand
+       high-level anatomical geometry, organ symmetry, and global tissue morphology (Assran et al., 2023).
 
     2. Uniform Tensor Length for Efficient Collation:
        Standard I-JEPA implementations produce variable-length context token lists, requiring
@@ -108,6 +155,8 @@ class JEPAMaskingTransform:
         context_block_size: tuple[int, int] = (14, 14),
         target_block_size: tuple[int, int] = (5, 5),
         num_context_patches: int = 96,
+        max_target_overlap: float = 0.25,
+        contiguous_context: bool = True,
     ):
         self.img_size = img_size
         self.patch_size = patch_size
@@ -119,6 +168,8 @@ class JEPAMaskingTransform:
         self.context_h, self.context_w = context_block_size
         self.target_h, self.target_w = target_block_size
         self.num_context_patches = num_context_patches
+        self.max_target_overlap = max_target_overlap
+        self.contiguous_context = contiguous_context
 
     def _sample_fixed_block_mask(self, block_h: int, block_w: int) -> np.ndarray:
         """Samples a rectangular block of patch indices with fixed height and width at random grid coordinates."""
@@ -132,6 +183,70 @@ class JEPAMaskingTransform:
         mask[top : top + h, left : left + w] = True
         return np.where(mask.flatten())[0]
 
+    def _sample_contiguous_cluster(
+        self,
+        candidate_indices: list[int],
+        target_len: int,
+        all_allowed_indices: list[int],
+    ) -> list[int]:
+        """
+        Grows a compact, contiguous spatial cluster of patch indices via 4-connected BFS.
+        Preserves spatial contiguity of context representations per Assran et al. (2023).
+        """
+        cand_set = set(candidate_indices)
+        allowed_set = set(all_allowed_indices)
+        seed = int(np.random.choice(candidate_indices))
+        
+        visited = {seed}
+        queue = [seed]
+        head = 0
+        
+        # 1. Grow within candidate block first
+        while head < len(queue) and len(visited) < target_len:
+            curr = queue[head]
+            head += 1
+            r, c = curr // self.grid_w, curr % self.grid_w
+            neighbors = [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]
+            np.random.shuffle(neighbors)
+            for nr, nc in neighbors:
+                if 0 <= nr < self.grid_h and 0 <= nc < self.grid_w:
+                    n_idx = nr * self.grid_w + nc
+                    if n_idx in cand_set and n_idx not in visited:
+                        visited.add(n_idx)
+                        queue.append(n_idx)
+                        if len(visited) == target_len:
+                            break
+
+        # 2. If candidate block exhausted (e.g. severed by target mask), expand into any non-target patches
+        if len(visited) < target_len:
+            head = 0
+            while head < len(queue) and len(visited) < target_len:
+                curr = queue[head]
+                head += 1
+                r, c = curr // self.grid_w, curr % self.grid_w
+                neighbors = [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]
+                np.random.shuffle(neighbors)
+                for nr, nc in neighbors:
+                    if 0 <= nr < self.grid_h and 0 <= nc < self.grid_w:
+                        n_idx = nr * self.grid_w + nc
+                        if n_idx in allowed_set and n_idx not in visited:
+                            visited.add(n_idx)
+                            queue.append(n_idx)
+                            if len(visited) == target_len:
+                                break
+
+        # 3. Fallback: complete to target_len from available non-target indices
+        if len(visited) < target_len:
+            remaining = [i for i in all_allowed_indices if i not in visited]
+            needed = target_len - len(visited)
+            if len(remaining) >= needed:
+                supp = np.random.choice(remaining, size=needed, replace=False).tolist()
+                visited.update(supp)
+            else:
+                visited.update(remaining)
+
+        return sorted(visited)
+
     def __call__(self, x: torch.Tensor) -> dict:
         """
         Returns context patch indices [N_ctx] and list of target patch indices [N_tgt].
@@ -141,10 +256,26 @@ class JEPAMaskingTransform:
         """
         target_masks = []
         all_target_indices = set()
+        block_area = self.target_h * self.target_w
+
+        # Sample target blocks with collision mitigation (finding M1)
         for _ in range(self.num_target_masks):
-            target_idx = self._sample_fixed_block_mask(self.target_h, self.target_w)
-            target_masks.append(torch.tensor(target_idx, dtype=torch.long))
-            all_target_indices.update(target_idx.tolist())
+            best_target_idx = None
+            min_overlap = float("inf")
+            for _attempt in range(10):
+                cand_idx = self._sample_fixed_block_mask(self.target_h, self.target_w)
+                overlap = len(set(cand_idx.tolist()) & all_target_indices)
+                if overlap <= block_area * self.max_target_overlap:
+                    best_target_idx = cand_idx
+                    break
+                if overlap < min_overlap:
+                    min_overlap = overlap
+                    best_target_idx = cand_idx
+            if best_target_idx is None:
+                best_target_idx = self._sample_fixed_block_mask(self.target_h, self.target_w)
+
+            target_masks.append(torch.tensor(best_target_idx, dtype=torch.long))
+            all_target_indices.update(best_target_idx.tolist())
         
         # Sample candidate context block
         ctx_candidate_block = self._sample_fixed_block_mask(self.context_h, self.context_w)
@@ -157,8 +288,13 @@ class JEPAMaskingTransform:
         
         # Guarantee exactly self.num_context_patches for uniform batch collation
         target_ctx_len = min(self.num_context_patches, len(all_non_target))
-        if len(non_overlap_candidates) >= target_ctx_len:
-            # Unbiased stochastic sampling without replacement across candidate spatial block
+
+        if self.contiguous_context and len(non_overlap_candidates) > target_ctx_len:
+            # Preserves 2D spatial contiguity via contiguous cluster expansion (finding H4)
+            chosen_ctx = self._sample_contiguous_cluster(
+                non_overlap_candidates, target_ctx_len, all_non_target
+            )
+        elif len(non_overlap_candidates) >= target_ctx_len:
             chosen_ctx = np.random.choice(non_overlap_candidates, size=target_ctx_len, replace=False)
             chosen_ctx = np.sort(chosen_ctx).tolist()
         else:

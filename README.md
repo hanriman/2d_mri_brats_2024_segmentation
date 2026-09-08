@@ -8,10 +8,10 @@ A production-grade, reproducible research repository for self-supervised represe
 
 This repository investigates Joint-Embedding Predictive Architectures (JEPA) for multi-modal brain MRI slice representation learning, comparing:
 1. **I-JEPA** (Assran et al., *CVPR 2023*): Dual-encoder Image Joint-Embedding Predictive Architecture predicting target patch representations in latent space with Exponential Moving Average (EMA) teacher updates.
-2. **SigReg JEPA** (LeJEPA / SIGReg; Balestriero & LeCun, 2025): Single-encoder architecture regularized via the empirical characteristic function **Epps–Pulley Gaussianity Test** ($\mathcal{T}_{\text{EP}}$) over 256 random 1D Cramér–Wold projections through a 2-layer Projector MLP, eliminating heuristic EMA teachers.
-3. **VisReg JEPA** (VISReg; Wu, Balestriero, Levine, 2026): Single-encoder architecture regularized via decoupled **Scale** (batch variance hinge $\ge 1.0$) and **Shape** (**Sliced-Wasserstein Distance** against analytical standard Gaussian quantiles along 256 random projections).
+2. **SigReg JEPA** (LeJEPA / SIGReg; Balestriero & LeCun, 2025): Single-encoder architecture regularized via the empirical characteristic function **Epps–Pulley Gaussianity Test** ($\mathcal{T}_{\text{EP}}$) under the normalized Gaussian measure $d\mu(t) = \frac{1}{\sqrt{2\pi}} e^{-t^2/2} dt$ over 256 random 1D Cramér–Wold projections through a 2-layer Projector MLP, eliminating heuristic EMA teachers.
+3. **VisReg JEPA** (VISReg; Wu, Balestriero, Levine, 2026): Single-encoder architecture regularized via decoupled **Scale** (dimension-wise variance penalty anchoring $\sigma_d \to 1.0$, with optional hinge mode) and **Shape** (**Sliced-Wasserstein Distance** against analytical standard Gaussian quantiles along 256 random projections).
 4. **2D UNet Baseline**: Supervised 5-stage Residual UNet baseline for multi-modal tumor segmentation.
-5. **2D nnU-Net Baseline** (Isensee et al., *Nature Methods 2021*): State-of-the-art supervised baseline wrapping MONAI `DynUNet` with residual encoder blocks (`res_block=True`), Instance Normalization, LeakyReLU, and multi-scale unnormalized **Deep Supervision** heads ($\sum_{s=0}^3 2^{-s} \mathcal{L}_s$).
+5. **2D nnU-Net Baseline** (Isensee et al., *Nature Methods 2021*): State-of-the-art supervised baseline wrapping MONAI `DynUNet` with residual encoder blocks (`res_block=True`), Instance Normalization, LeakyReLU, and multi-scale normalized **Deep Supervision** heads ($\sum_{s=0}^{S-1} w_s \mathcal{L}_s$ with $w_s = 2^{-s} / \sum_j 2^{-j}$).
 
 ---
 
@@ -195,4 +195,4 @@ A standalone runner notebook is available at [`notebooks/kaggle_runner.ipynb`](n
 ```bash
 uv run pytest -v
 ```
-All 19 automated unit tests pass in < 2 seconds, verifying mathematical correctness of Epps-Pulley, Sliced-Wasserstein, Dice+BCE, Deep Supervision, model forward/backward graphs, and metrics.
+All 48 automated unit tests pass in < 3 seconds, verifying mathematical correctness of Epps-Pulley, Sliced-Wasserstein, Dice+BCE, Deep Supervision, model forward/backward graphs, contiguous masking transforms, and metrics.

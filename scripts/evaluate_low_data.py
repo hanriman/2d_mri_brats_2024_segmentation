@@ -53,7 +53,9 @@ def parse_args():
                         help="Source encoder weights to load: target (EMA teacher) or context (online student)")
     parser.add_argument("--max_batches", type=int, default=None,
                         help="Limit batches per epoch/eval for rapid smoke testing")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for data subset sampling and initialization")
+    parser.add_argument("--seeds", type=int, nargs="+", default=None,
+                        help="Optional list of random seeds for repeated trials (e.g. --seeds 42 43 44) to report mean ± std")
     return parser.parse_args()
 
 

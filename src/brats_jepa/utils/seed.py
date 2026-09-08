@@ -1,3 +1,4 @@
+import os
 import random
 
 import numpy as np
@@ -6,6 +7,7 @@ import torch
 
 def set_seed(seed: int = 42) -> None:
     """Sets deterministic seeds across Python, NumPy, and PyTorch for reproducibility."""
+    os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed % (2**32))
     torch.manual_seed(seed)

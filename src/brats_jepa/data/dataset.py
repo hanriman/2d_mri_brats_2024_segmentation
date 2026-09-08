@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 
-from .transforms import get_segmentation_transforms
+from .transforms import ZScoreNormalize, get_segmentation_transforms
 
 
 class BraTS2DDataset(Dataset):
@@ -52,6 +52,7 @@ class BraTS2DDataset(Dataset):
         transforms: Callable | None = None,
         jepa_masking: Callable | None = None,
         cache_in_memory: bool = False,
+        normalize_intensity: bool = False,
     ):
         super().__init__()
         self.metadata_csv = Path(metadata_csv).resolve()
@@ -59,6 +60,8 @@ class BraTS2DDataset(Dataset):
         self.data_root = self.metadata_csv.parent
         self.jepa_masking = jepa_masking
         self.cache_in_memory = cache_in_memory
+        self.normalize_intensity = normalize_intensity
+        self._normalizer = ZScoreNormalize() if normalize_intensity else None
         self._cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         
         if not self.metadata_csv.exists():
@@ -102,8 +105,10 @@ class BraTS2DDataset(Dataset):
             data_dict = self.transforms(data_dict)
             
         image_tensor = data_dict["image"]
+        if self._normalizer is not None:
+            image_tensor = self._normalizer(image_tensor)
         label_tensor = (data_dict["label"] > 0).float()  # Ensure strict binary float tensor
-        
+
         output = {
             "image": image_tensor,
             "label": label_tensor,

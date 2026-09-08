@@ -251,8 +251,8 @@ def main():
                 "men_rt_test_dice_tumor": float(np.mean(dice_tumor_list)) if dice_tumor_list else float("nan"),
                 "men_rt_test_iou": float(np.mean(iou_list)) if iou_list else 0.0,
                 "hd95_px": float(np.mean(hd95_list)) if hd95_list else 0.0,
-                "patient_3d_dice": vol_metrics.get("patient_3d_dice_mean", float("nan")),
-                "patient_3d_hd95_px": vol_metrics.get("patient_3d_hd95_mean", float("nan")),
+                "patient_3d_dice": vol_metrics.get("dice_3d", vol_metrics.get("patient_3d_dice_mean", float("nan"))),
+                "patient_3d_hd95_px": vol_metrics.get("hd95_3d", vol_metrics.get("patient_3d_hd95_mean", float("nan"))),
             })
 
     summary_df = pd.DataFrame(results)

@@ -182,3 +182,53 @@ def test_patient_volume_metrics():
 
     # Mean 3D Dice across the two patients should be 0.5
     assert abs(vol_metrics["dice_3d"] - 0.5) < 1e-5
+
+    # Verify backward compatibility aliases
+    assert "patient_3d_dice_mean" in vol_metrics
+    assert "patient_3d_iou_mean" in vol_metrics
+    assert "patient_3d_precision_mean" in vol_metrics
+    assert "patient_3d_recall_mean" in vol_metrics
+    assert "patient_3d_hd95_mean" in vol_metrics
+    assert vol_metrics["patient_3d_dice_mean"] == vol_metrics["dice_3d"]
+    assert vol_metrics["patient_3d_hd95_mean"] == vol_metrics["hd95_3d"]
+
+
+def test_sparse_slices_patient_volume_metrics():
+    """Verify that discontinuous sparse slices compute accurate 3D HD95 using 2D boundary extraction."""
+    from brats_jepa.metrics.segmentation_metrics import compute_patient_volume_metrics
+
+    # Patient with sparse slices at z = [10, 30, 50, 70, 90]
+    patient_ids = ["patient_sparse"] * 5
+    slice_indices = [10, 30, 50, 70, 90]
+
+    # Ground truth: small tumor square in slice 30 and 50
+    t_list = []
+    p_list = []
+    for z in slice_indices:
+        t = torch.zeros(1, 1, 40, 40)
+        p = torch.full((1, 1, 40, 40), -10.0)
+        if z in (30, 50):
+            t[:, :, 15:25, 15:25] = 1.0
+            p[:, :, 15:25, 15:25] = 10.0
+        t_list.append(t)
+        p_list.append(p)
+
+    # Identical predictions -> HD95 must be 0.0
+    res_ident = compute_patient_volume_metrics(p_list, t_list, patient_ids, slice_indices=slice_indices)
+    assert res_ident["dice_3d"] == 1.0
+    assert res_ident["hd95_3d"] == 0.0
+
+    # Perturbed prediction: shift tumor by 2 pixels along x in slice 30
+    p_shift_list = []
+    for z in slice_indices:
+        p = torch.full((1, 1, 40, 40), -10.0)
+        if z == 30:
+            p[:, :, 15:25, 17:27] = 10.0  # shifted by 2 px
+        elif z == 50:
+            p[:, :, 15:25, 15:25] = 10.0
+        p_shift_list.append(p)
+
+    res_shift = compute_patient_volume_metrics(p_shift_list, t_list, patient_ids, slice_indices=slice_indices)
+    assert 0.0 < res_shift["dice_3d"] < 1.0
+    assert 1.0 <= res_shift["hd95_3d"] <= 3.0
+

@@ -49,6 +49,10 @@ def parse_args():
                         help="Cache loaded slices in RAM to eliminate disk I/O bottlenecks")
     parser.add_argument("--no_cache_data", action="store_false", dest="cache_data",
                         help="Disable RAM caching of slices")
+    parser.add_argument("--decoder_type", type=str, default=None, choices=["bottleneck", "multiscale"],
+                        help="Decoder architecture for downstream segmentation (overrides checkpoint if provided)")
+    parser.add_argument("--encoder_source", type=str, default="target", choices=["target", "context"],
+                        help="Which pre-trained encoder weights to evaluate representations for (default: target)")
     parser.add_argument("--device", type=str, default="auto", help="Device")
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches for quick local smoke testing")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -126,8 +130,8 @@ def evaluate_segmentation_model(
     )
 
     dice_tumor_mean = float(np.mean(dice_tumor_list)) if dice_tumor_list else float("nan")
-    p3d_dice = vol_metrics.get("patient_3d_dice_mean", float("nan"))
-    p3d_hd95 = vol_metrics.get("patient_3d_hd95_mean", float("nan"))
+    p3d_dice = vol_metrics.get("dice_3d", vol_metrics.get("patient_3d_dice_mean", float("nan")))
+    p3d_hd95 = vol_metrics.get("hd95_3d", vol_metrics.get("patient_3d_hd95_mean", float("nan")))
 
     return {
         "test_dice_all": float(np.mean(dice_list)) if dice_list else 0.0,
@@ -291,8 +295,12 @@ def main():
         if ssl_ckpt.exists():
             ssl_model = ssl_model_cls(img_size=240, patch_size=16, in_channels=4, embed_dim=384).to(device)
             ckpt = torch.load(ssl_ckpt, map_location=device)
-            state_key = "target_encoder_state_dict" if "target_encoder_state_dict" in ckpt else "context_encoder_state_dict"
-            encoder = getattr(ssl_model, "target_encoder", ssl_model.context_encoder)
+            if getattr(args, "encoder_source", "target") == "context":
+                state_key = "context_encoder_state_dict" if "context_encoder_state_dict" in ckpt else "target_encoder_state_dict"
+                encoder = ssl_model.context_encoder
+            else:
+                state_key = "target_encoder_state_dict" if "target_encoder_state_dict" in ckpt else "context_encoder_state_dict"
+                encoder = getattr(ssl_model, "target_encoder", ssl_model.context_encoder)
             encoder.load_state_dict(ckpt[state_key])
             encoder.eval()
 
@@ -315,7 +323,7 @@ def main():
         if finetuned_ckpt.exists():
             logger.info(f"Evaluating fine-tuned downstream segmentation for {name} from {finetuned_ckpt.name}...")
             ckpt = torch.load(finetuned_ckpt, map_location=device)
-            dec_type = ckpt.get("decoder_type", "bottleneck")
+            dec_type = getattr(args, "decoder_type", None) or ckpt.get("decoder_type", "bottleneck")
             model = JEPASegmentationModel(
                 img_size=240,
                 patch_size=16,

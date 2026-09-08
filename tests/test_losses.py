@@ -175,3 +175,27 @@ def test_visreg_amp_float16_stability():
     assert not torch.isinf(ctx_tokens.grad).any(), "Inf in gradients"
 
 
+def test_visreg_swd_metrics():
+    """Verify both MSE (W_2^2) and L1 (W_1) SWD formulations."""
+    import pytest
+
+    preds = [torch.randn(2, 20, 128)]
+    tgts = [torch.randn(2, 20, 128)]
+    ctx_tokens = torch.randn(2, 100, 128)
+
+    # 1. Default / MSE metric
+    loss_mse = VisRegLoss(swd_metric="mse")
+    res_mse = loss_mse(preds, tgts, ctx_tokens)
+    assert res_mse["shape_loss"].item() >= 0.0
+
+    # 2. L1 metric
+    loss_l1 = VisRegLoss(swd_metric="l1")
+    res_l1 = loss_l1(preds, tgts, ctx_tokens)
+    assert res_l1["shape_loss"].item() >= 0.0
+
+    # 3. Invalid metric raises ValueError
+    with pytest.raises(ValueError, match="Unknown swd_metric"):
+        VisRegLoss(swd_metric="invalid_metric")
+
+
+

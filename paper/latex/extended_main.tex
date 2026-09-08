@@ -377,7 +377,7 @@ The nnU-Net baseline implements the self-configuring DynUNet architecture \citep
 \paragraph{ViT Segmentation Decoders: Bottleneck vs. Multi-Scale Feature Pyramid}
 Downstream segmentation fine-tuning evaluates two architectural decoder topologies:
 \begin{enumerate}
-    \item \textbf{Pure Bottleneck Decoder (\texttt{ViTSegmentationDecoder})}: To isolate the linear and non-linear expressive power of the final latent representation without multi-scale feature leakage, the patch token grid from the final ViT layer $\mathbf{Z}^{(12)} \in \mathbb{R}^{B \times 225 \times 384}$ is reshaped into a spatial bottleneck tensor $\mathbf{X}_{\text{bot}} \in \mathbb{R}^{B \times 384 \times 15 \times 15}$. A 4-stage sequential transposed convolution network progressively upsamples spatial resolution without lateral skip connections:
+    \item \textbf{Pure Bottleneck Decoder (\texttt{ViTSegmentationDecoder})}: To isolate the linear and non-linear expressive power of the final latent representation without multi-scale feature leakage, the patch token grid from the final ViT layer $\mathbf{Z}^{(8)} \in \mathbb{R}^{B \times 225 \times 384}$ is reshaped into a spatial bottleneck tensor $\mathbf{X}_{\text{bot}} \in \mathbb{R}^{B \times 384 \times 15 \times 15}$. A 4-stage sequential transposed convolution network progressively upsamples spatial resolution without lateral skip connections:
     \begin{align}
         \mathbf{X}_1 &= \text{GELU}\left(\text{GroupNorm}_{16}\left(\text{ConvTranspose2d}_{384 \to 192, k=2, s=2}(\mathbf{X}_{\text{bot}})\right)\right) & (30 \times 30) \\
         \mathbf{X}_2 &= \text{GELU}\left(\text{GroupNorm}_{8}\left(\text{ConvTranspose2d}_{192 \to 96, k=2, s=2}(\mathbf{X}_1)\right)\right) & (60 \times 60) \\

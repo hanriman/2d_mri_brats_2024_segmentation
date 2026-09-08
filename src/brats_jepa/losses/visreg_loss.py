@@ -35,10 +35,12 @@ class VisRegLoss(nn.Module):
        `torch.erfinv` at distribution tails under AMP `float16`.
 
     3. Closed-Form 1D Wasserstein Computation:
-       The 1D Wasserstein-1 distance between sorted empirical samples and target quantiles has
-       a closed-form exact solution:
-           W_1(P_N, Q) = \frac{1}{N} \sum_{i=1}^N |x_{(i)} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right)|
-       which is computed in O(N \log N) time via sorting without iterative optimization.
+       The 1D Wasserstein distance between sorted empirical samples and target quantiles has
+       a closed-form exact solution. For W_2^2 (squared 2-Wasserstein, Wu et al., 2026):
+           W_2^2(P_N, Q) = \frac{1}{N} \sum_{i=1}^N \left(x_{(i)} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right)\right)^2
+       and for W_1 (1-Wasserstein):
+           W_1(P_N, Q) = \frac{1}{N} \sum_{i=1}^N \left|x_{(i)} - \Phi^{-1}\left(\frac{i - 0.5}{N}\right)\right|
+       both computed in O(N \log N) time via sorting without iterative optimization.
 
     References:
     -----------
@@ -58,6 +60,7 @@ class VisRegLoss(nn.Module):
         num_projections: int = 256,
         target_std: float = 1.0,
         var_weight: float | None = None,
+        swd_metric: str = "mse",
     ):
         super().__init__()
         self.jepa_loss = IJEPALoss(loss_type=loss_type)
@@ -67,6 +70,9 @@ class VisRegLoss(nn.Module):
         self.shape_weight = self.swd_weight
         self.num_projections = num_projections
         self.target_std = target_std
+        if swd_metric not in ("mse", "l1"):
+            raise ValueError(f"Unknown swd_metric: {swd_metric}. Must be 'mse' or 'l1'.")
+        self.swd_metric = swd_metric
         # Backwards compatibility attribute
         self.var_weight = self.scale_weight
 
@@ -105,9 +111,14 @@ class VisRegLoss(nn.Module):
         # Evaluated strictly in float32 to prevent float16 erfinv tail saturation under AMP
         probs = (torch.arange(1, N + 1, device=z.device, dtype=torch.float32) - 0.5) / N
         gaussian_quantiles = (torch.erfinv(2.0 * probs - 1.0) * math.sqrt(2.0)).to(dtype=z.dtype)  # [N]
+        target_quantiles = gaussian_quantiles.unsqueeze(-1).expand_as(sorted_proj)
 
-        # L1 Wasserstein distance across all slices
-        swd = F.l1_loss(sorted_proj, gaussian_quantiles.unsqueeze(-1).expand_as(sorted_proj))
+        if self.swd_metric == "mse":
+            # Squared 2-Wasserstein W_2^2 (Wu et al., 2026)
+            swd = F.mse_loss(sorted_proj, target_quantiles)
+        else:
+            # 1-Wasserstein W_1
+            swd = F.l1_loss(sorted_proj, target_quantiles)
         return swd
 
     def forward(

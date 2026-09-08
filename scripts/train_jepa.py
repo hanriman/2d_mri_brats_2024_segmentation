@@ -43,6 +43,8 @@ def parse_args():
     parser.add_argument("--no_amp", action="store_false", dest="amp", help="Disable automatic mixed precision")
     parser.add_argument("--device", type=str, default="auto", help="Execution device")
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches per epoch for quick local smoke testing")
+    parser.add_argument("--swd_metric", type=str, choices=["mse", "l1"], default="mse",
+                        help="Sliced-Wasserstein distance metric for VISReg shape loss (default: mse for W_2^2)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     return parser.parse_args()
 
@@ -123,7 +125,8 @@ def main():
         loss_fn = SigRegLoss(loss_type="smooth_l1", sigreg_weight=1.0, num_projections=256).to(device)
     elif args.model_type == "visreg_jepa":
         model = VisRegJEPA(img_size=240, patch_size=16, in_channels=4, embed_dim=384, proj_dim=128).to(device)
-        loss_fn = VisRegLoss(loss_type="smooth_l1", var_weight=1.0, swd_weight=1.0, num_projections=256).to(device)
+        swd_m = getattr(args, "swd_metric", "mse")
+        loss_fn = VisRegLoss(loss_type="smooth_l1", var_weight=1.0, swd_weight=1.0, num_projections=256, swd_metric=swd_m).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     warmup_epochs = min(5, max(1, args.epochs // 5)) if args.epochs >= 5 else 0

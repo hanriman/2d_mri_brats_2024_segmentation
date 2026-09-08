@@ -381,14 +381,43 @@ def compute_patient_volume_metrics(
         # 3D HD95:
         if slice_indices is not None:
             p_z = [slice_indices[i] for i in s_idxs]
-            max_z = max(p_z)
-            h, w = sub_p.shape[1], sub_p.shape[2]
-            vol_p = np.zeros((max_z + 1, h, w), dtype=bool)
-            vol_t = np.zeros((max_z + 1, h, w), dtype=bool)
+            # When slices are sparse and discontinuous, 3D erosion on a volume with zero-padded
+            # missing z-slices treats every foreground voxel as a boundary voxel because its z±1
+            # neighbors are zero. Instead, we extract 2D boundary points per slice and assign
+            # physical 3D coordinates (z, y, x) before computing 3D Euclidean distances.
+            pts_p_list = []
+            pts_t_list = []
             for local_i, z in enumerate(p_z):
-                vol_p[z] = sub_p[local_i]
-                vol_t[z] = sub_t[local_i]
-            hd95_3d = compute_hd95_3d(vol_p, vol_t)
+                s_p = sub_p[local_i]
+                s_t = sub_t[local_i]
+                pts_2d_p = _extract_surface_points(s_p)
+                if len(pts_2d_p) > 0:
+                    z_col = np.full((len(pts_2d_p), 1), float(z), dtype=np.float64)
+                    pts_p_list.append(np.hstack([z_col, pts_2d_p.astype(np.float64)]))
+                pts_2d_t = _extract_surface_points(s_t)
+                if len(pts_2d_t) > 0:
+                    z_col = np.full((len(pts_2d_t), 1), float(z), dtype=np.float64)
+                    pts_t_list.append(np.hstack([z_col, pts_2d_t.astype(np.float64)]))
+
+            has_p = len(pts_p_list) > 0
+            has_t = len(pts_t_list) > 0
+            if not has_p and not has_t:
+                hd95_3d = 0.0
+            elif not has_p or not has_t:
+                max_z = max(p_z)
+                h, w = sub_p.shape[1], sub_p.shape[2]
+                hd95_3d = float(np.sqrt((max_z + 1) ** 2 + h**2 + w**2))
+            else:
+                if np.array_equal(sub_p, sub_t):
+                    hd95_3d = 0.0
+                else:
+                    all_pts_p = np.vstack(pts_p_list)
+                    all_pts_t = np.vstack(pts_t_list)
+                    tree_t = cKDTree(all_pts_t)
+                    d_p2t, _ = tree_t.query(all_pts_p)
+                    tree_p = cKDTree(all_pts_p)
+                    d_t2p, _ = tree_p.query(all_pts_t)
+                    hd95_3d = float(max(np.percentile(d_p2t, 95), np.percentile(d_t2p, 95)))
         else:
             hd95_3d = compute_hd95_3d(sub_p, sub_t)
 
@@ -407,12 +436,24 @@ def compute_patient_volume_metrics(
         p_recs.append(rec_3d)
         p_hd95s.append(hd95_3d)
 
+    mean_dice = float(np.mean(p_dices)) if p_dices else 0.0
+    mean_iou = float(np.mean(p_ious)) if p_ious else 0.0
+    mean_prec = float(np.mean(p_precs)) if p_precs else 0.0
+    mean_rec = float(np.mean(p_recs)) if p_recs else 0.0
+    mean_hd95 = float(np.mean(p_hd95s)) if p_hd95s else 0.0
+
     return {
-        "dice_3d": float(np.mean(p_dices)),
-        "iou_3d": float(np.mean(p_ious)),
-        "precision_3d": float(np.mean(p_precs)),
-        "recall_3d": float(np.mean(p_recs)),
-        "hd95_3d": float(np.mean(p_hd95s)),
+        "dice_3d": mean_dice,
+        "iou_3d": mean_iou,
+        "precision_3d": mean_prec,
+        "recall_3d": mean_rec,
+        "hd95_3d": mean_hd95,
+        # Backward compatibility aliases for evaluation scripts
+        "patient_3d_dice_mean": mean_dice,
+        "patient_3d_iou_mean": mean_iou,
+        "patient_3d_precision_mean": mean_prec,
+        "patient_3d_recall_mean": mean_rec,
+        "patient_3d_hd95_mean": mean_hd95,
         "num_patients": len(patient_slices),
         "per_patient": per_patient,
     }

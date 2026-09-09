@@ -47,7 +47,7 @@ class IJEPALoss(nn.Module):
             device = targets[0].device if targets else torch.device("cpu")
             return torch.tensor(0.0, device=device, requires_grad=True)
         
-        loss = torch.tensor(0.0, device=predictions[0].device)
+        losses = []
         for pred, tgt in zip(predictions, targets):
             # Per official I-JEPA (Assran et al., CVPR 2023, Section 3.2):
             # 1. Target representations s_y are produced by the EMA teacher (or stop-grad encoder)
@@ -64,6 +64,6 @@ class IJEPALoss(nn.Module):
                 block_loss = F.smooth_l1_loss(pred, tgt_norm)
             else:
                 block_loss = F.mse_loss(pred, tgt_norm)
-            loss = loss + block_loss
+            losses.append(block_loss)
             
-        return loss / len(predictions)
+        return torch.stack(losses).mean()

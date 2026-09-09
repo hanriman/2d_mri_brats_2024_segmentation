@@ -1,6 +1,16 @@
+import math
+
+import pytest
 import torch
 
-from brats_jepa.losses import CombinedDiceBCELoss, IJEPALoss, SigRegLoss, VisRegLoss
+from brats_jepa.losses import (
+    CombinedDiceBCELoss,
+    DeepSupervisionLoss,
+    IJEPALoss,
+    SigRegLoss,
+    VisRegLoss,
+)
+from brats_jepa.losses.sigreg_loss import EppsPulleyGaussianityTest
 
 
 def test_dice_bce_loss():
@@ -52,7 +62,6 @@ def test_visreg_loss():
     assert ctx_tokens.grad is not None
 
 def test_epps_pulley_gaussianity():
-    from brats_jepa.losses.sigreg_loss import EppsPulleyGaussianityTest
     test = EppsPulleyGaussianityTest(t_max=3.0, n_knots=17)
     
     # 1. Samples from standard normal N(0, 1)
@@ -69,7 +78,6 @@ def test_epps_pulley_gaussianity():
 
 def test_sigreg_normalize_measure_scaling():
     """Verify that normalize_measure=False produces exact sqrt(2*pi) unnormalized LeJEPA scaling."""
-    import math
     from brats_jepa.losses.sigreg_loss import EppsPulleyGaussianityTest, SigRegLoss
 
     test_norm = EppsPulleyGaussianityTest(normalize_measure=True)
@@ -96,7 +104,6 @@ def test_sigreg_normalize_measure_scaling():
 
 
 def test_deep_supervision_loss():
-    from brats_jepa.losses import DeepSupervisionLoss
     loss_fn = DeepSupervisionLoss()
     logits = [torch.randn(2, 1, 240, 240, requires_grad=True),
               torch.randn(2, 1, 120, 120, requires_grad=True)]
@@ -205,7 +212,6 @@ def test_visreg_amp_float16_stability():
 
 def test_visreg_swd_metrics():
     """Verify both MSE (W_2^2) and L1 (W_1) SWD formulations."""
-    import pytest
 
     preds = [torch.randn(2, 20, 128)]
     tgts = [torch.randn(2, 20, 128)]
@@ -239,7 +245,6 @@ def test_ijepa_loss_target_detachment():
 
 def test_visreg_scale_loss_types():
     """Verify both 'squared' (Wu et al., 2026) and 'hinge' formulations for VisReg scale loss."""
-    import pytest
     preds = [torch.randn(4, 20, 128)]
     tgts = [torch.randn(4, 20, 128)]
 

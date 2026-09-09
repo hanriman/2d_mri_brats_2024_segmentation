@@ -53,17 +53,17 @@ class DeepSupervisionLoss(nn.Module):
             return self.base_loss(logits, target)
 
     def _compute_multi_head_loss(self, head_list: list[torch.Tensor], target: torch.Tensor) -> torch.Tensor:
-        total_loss = torch.tensor(0.0, device=target.device)
         raw_weights = [1.0 / (2**i) for i in range(len(head_list))]
         # Normalize weights so sum(weights) == 1.0 per nnU-Net protocol
         w_sum = sum(raw_weights)
         weights = [w / w_sum for w in raw_weights]
         
+        losses = []
         for head_logits, w in zip(head_list, weights):
             if head_logits.shape[-2:] != target.shape[-2:]:
                 target_scaled = F.interpolate(target, size=head_logits.shape[-2:], mode="nearest")
             else:
                 target_scaled = target
-            total_loss = total_loss + w * self.base_loss(head_logits, target_scaled)
+            losses.append(w * self.base_loss(head_logits, target_scaled))
             
-        return total_loss
+        return torch.stack(losses).sum()

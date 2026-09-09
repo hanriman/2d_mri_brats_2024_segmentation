@@ -254,7 +254,7 @@ def test_hd95_anisotropic_voxel_spacing():
 
 def test_representation_collapse_metrics_isotropic():
     """Verify that isotropic representations yield high rank and near-zero cosine similarity."""
-    from brats_jepa.metrics.probing_metrics import compute_representation_collapse_metrics, compute_effective_rank
+    from brats_jepa.metrics.probing_metrics import compute_representation_collapse_metrics
 
     torch.manual_seed(42)
     # 200 tokens of dimension 64 sampled from standard normal

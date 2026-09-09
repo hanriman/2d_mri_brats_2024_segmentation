@@ -94,7 +94,7 @@ class IJEPA(nn.Module):
         """Exponential Moving Average (EMA) update of Target Encoder weights."""
         m = momentum if momentum is not None else self.ema_decay
         for param_c, param_t in zip(self.context_encoder.parameters(), self.target_encoder.parameters()):
-            param_t.data.mul_(m).add_((1.0 - m) * param_c.data)
+            param_t.lerp_(param_c, 1.0 - m)
 
     def forward(
         self,

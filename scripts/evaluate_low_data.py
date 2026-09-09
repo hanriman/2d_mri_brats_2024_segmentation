@@ -180,6 +180,9 @@ def main():
 
     ssl_base_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else CHECKPOINTS_DIR
 
+    loss_fn_bce = CombinedDiceBCELoss()
+    loss_fn_ds = DeepSupervisionLoss()
+
     results = []
 
     for frac in label_fractions:
@@ -222,7 +225,6 @@ def main():
         logger.info(f"Training UNet Baseline on {frac*100:.0f}% labels...")
         t_start = time.perf_counter()
         unet = BraTS2DUNet(in_channels=4, out_channels=1).to(device)
-        loss_fn_bce = CombinedDiceBCELoss()
         opt_u = torch.optim.AdamW(unet.parameters(), lr=args.lr, weight_decay=1e-4)
         sched_u = torch.optim.lr_scheduler.CosineAnnealingLR(opt_u, T_max=args.epochs, eta_min=1e-6)
         scaler_u = torch.amp.GradScaler('cuda', enabled=use_amp)
@@ -282,7 +284,6 @@ def main():
         logger.info(f"Training nnU-Net SOTA Baseline on {frac*100:.0f}% labels...")
         t_start = time.perf_counter()
         nnunet = BraTS2DnnUNet(in_channels=4, out_channels=1, deep_supervision=True).to(device)
-        loss_fn_ds = DeepSupervisionLoss()
         opt_nn = torch.optim.AdamW(nnunet.parameters(), lr=2e-4, weight_decay=1e-5)
         sched_nn = torch.optim.lr_scheduler.CosineAnnealingLR(opt_nn, T_max=args.epochs, eta_min=1e-6)
         scaler_nn = torch.amp.GradScaler('cuda', enabled=use_amp)

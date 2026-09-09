@@ -202,7 +202,7 @@ The self-supervised prediction task requires partitioning the $15 \times 15$ gri
 The predictor $P_\phi$ is a narrow 4-block Transformer operating in a lower-dimensional projection space $D_{\text{pred}} = 192$ (half the encoder embedding dimension $D = 384$).
 
 \paragraph{Dimension Projection \& Mask Token}
-Context tokens are projected via a linear layer: $\mathbf{Z}_{\text{ctx, proj}} = \text{Linear}_{384 \to 192}(Z_{\text{ctx}}) \in \mathbb{R}^{B \times N_{\text{ctx}} \times 192}$. A shared learnable mask token $\mathbf{e}_{\text{mask}} \in \mathbb{R}^{1 \times 1 \times 192}$, initialized via truncated normal $\mathcal{TN}(0, 0.02^2)$, serves as the placeholder for target patches to be predicted.
+Context tokens are projected via a linear layer: $\mathbf{Z}_{\text{ctx, proj}} = \text{Linear}_{384 \to 192}(\mathbf{Z}_{\text{ctx}}) \in \mathbb{R}^{B \times N_{\text{ctx}} \times 192}$. A shared learnable mask token $\mathbf{e}_{\text{mask}} \in \mathbb{R}^{1 \times 1 \times 192}$, initialized via truncated normal $\mathcal{TN}(0, 0.02^2)$, serves as the placeholder for target patches to be predicted.
 
 \paragraph{Vectorized Positional Embedding Retrieval}
 Because context indices $\mathcal{I}_{\text{ctx}}$ and target indices $\mathcal{I}_{\text{tgt}}$ can independently be 1D (shared across the batch) or 2D (heterogeneous per-sample masks), we decouple positional retrieval using \texttt{torch.gather}:
@@ -212,14 +212,14 @@ Because context indices $\mathcal{I}_{\text{ctx}}$ and target indices $\mathcal{
         \text{gather}\left(\mathbf{E}_{\text{pos, pred}}.\text{expand}(B, -1, -1), \, 1, \, \mathcal{I}_{\text{ctx}} \otimes \mathbf{1}_{D_{\text{pred}}}\right), & \text{if } \text{dim}(\mathcal{I}_{\text{ctx}}) = 2
     \end{cases}
 \end{equation}
-and similarly for target positional embeddings $\mathbf{P}_{\text{tgt}}$ using $\mathcal{I}_{\text{tgt}}$. 
+where $\mathbf{E}_{\text{pos, pred}} \in \mathbb{R}^{1 \times N \times D_{\text{pred}}}$ denotes the predictor's spatial positional embedding tensor, $\mathbf{1}_{D_{\text{pred}}} \in \mathbb{R}^{D_{\text{pred}}}$ is an all-ones column vector, and $\otimes$ denotes the outer broadcast Kronecker product replicating the index across channels. An identical formulation retrieves target positional embeddings $\mathbf{P}_{\text{tgt}} \in \mathbb{R}^{B \times N_{\text{tgt}} \times D_{\text{pred}}}$ using $\mathcal{I}_{\text{tgt}}$. 
 
 \paragraph{Predictor Forward Pass}
 We construct the target mask token sequence as $\mathbf{M}_{\text{tgt}} = \mathbf{e}_{\text{mask}} + \mathbf{P}_{\text{tgt}}$ expanded across batch and target dimensions $(B, N_{\text{tgt}}, D_{\text{pred}})$. The context and target tokens are concatenated along the sequence dimension:
 \begin{equation}
     \mathbf{Z}_{\text{pred}}^{(0)} = \left[ (\mathbf{Z}_{\text{ctx, proj}} + \mathbf{P}_{\text{ctx}}) \,;\, \mathbf{M}_{\text{tgt}} \right] \in \mathbb{R}^{B \times (N_{\text{ctx}} + N_{\text{tgt}}) \times 192}
 \end{equation}
-$\mathbf{Z}_{\text{pred}}^{(0)}$ passes through 4 Pre-LN Transformer blocks with residual skip connections ($h = 6$, $D_{\text{ff}} = 768$). The target positions are extracted from the sequence and projected back to the encoder dimension:
+where $[ \cdot \,;\, \cdot ]$ denotes concatenation along dimension 1. $\mathbf{Z}_{\text{pred}}^{(0)}$ passes through 4 Pre-LN Transformer blocks with residual skip connections ($h = 6$, $D_{\text{ff}} = 768$). The target positions are extracted from the sequence and projected back to the encoder dimension:
 \begin{equation}
     \hat{Y}_{\text{tgt}} = \text{Linear}_{192 \to 384}\left(\text{LN}\left(P_\phi(\mathbf{Z}_{\text{pred}}^{(0)})[:, N_{\text{ctx}}:, :]\right)\right) \in \mathbb{R}^{B \times N_{\text{tgt}} \times 384}
 \end{equation}
@@ -228,7 +228,7 @@ $\mathbf{Z}_{\text{pred}}^{(0)}$ passes through 4 Pre-LN Transformer blocks with
 
 Standard I-JEPA \citep{assran2023ijepa} maintains two encoders: an online context encoder $E_\theta$ and a target teacher encoder $E_{\bar{\theta}}$. Target representations are computed by passing the full unmasked slice through $E_{\bar{\theta}}$:
 \begin{equation}
-    Y_{\text{tgt}} = E_{\bar{\theta}}(X)[:, \mathbf{I}_{\text{tgt}}, :] \in \mathbb{R}^{B \times N_{\text{tgt}} \times 384}
+    Y_{\text{tgt}} = E_{\bar{\theta}}(X)[:, \mathcal{I}_{\text{tgt}}, :] \in \mathbb{R}^{B \times N_{\text{tgt}} \times 384}
 \end{equation}
 
 \paragraph{Asymmetric Target Normalization}
@@ -236,7 +236,7 @@ Following the official I-JEPA formulation \citep{assran2023ijepa}, a crucial arc
 \begin{equation}
     \tilde{Y}_{\text{tgt}} = \text{LayerNorm}(Y_{\text{tgt}}) = \frac{Y_{\text{tgt}} - \mu(Y_{\text{tgt}})}{\sqrt{\sigma^2(Y_{\text{tgt}}) + \epsilon}} \odot \gamma + \beta
 \end{equation}
-If predictions $\hat{Y}_{\text{tgt}}$ were also normalized, the predictor could artificially alter its internal weight magnitudes without incurring gradient penalties, causing representational instability. Normalizing the teacher targets establishes a standardized, zero-mean, unit-variance coordinate reference for the online network.
+where $\mu(Y_{\text{tgt}})$ and $\sigma^2(Y_{\text{tgt}})$ denote the empirical mean and variance evaluated across the channel dimension $D$, $\epsilon = 10^{-5}$, and $\gamma, \beta \in \mathbb{R}^D$ are learnable affine gain and bias parameters. If predictions $\hat{Y}_{\text{tgt}}$ were also normalized, the predictor could artificially alter its internal weight magnitudes without incurring gradient penalties, causing representational instability. Normalizing the teacher targets establishes a standardized, zero-mean, unit-variance coordinate reference for the online network.
 
 \paragraph{Prediction Objective and Huber Loss Robustness}
 The prediction loss is computed using Smooth $L_1$ (Huber) loss between predicted tokens $\hat{Y}_{\text{tgt}}$ and normalized teacher tokens $\tilde{Y}_{\text{tgt}}$:
@@ -592,8 +592,9 @@ and macro-averaged across patients: $\text{Dice}_{\text{3D}} = \frac{1}{K} \sum_
 \paragraph{95th Percentile Hausdorff Distance ($\text{HD95}$ in pixels)}
 Let $\partial P$ and $\partial Y$ denote the morphological boundary contour point sets extracted via binary erosion with a $3 \times 3$ flat structuring element $\mathbf{K}$:
 \begin{equation}
-    \partial P = \text{argwhere}(P \oplus \mathbf{K} \setminus P), \qquad \partial Y = \text{argwhere}(Y \oplus \mathbf{K} \setminus Y)
+    \partial P = \text{argwhere}\left( (P \oplus \mathbf{K}) \setminus P \right), \qquad \partial Y = \text{argwhere}\left( (Y \oplus \mathbf{K}) \setminus Y \right)
 \end{equation}
+where $\oplus$ denotes binary morphological dilation, $\setminus$ denotes set difference, and $\mathbf{K}$ is a $3 \times 3$ flat square structuring element.
 Directed Euclidean distance vectors are computed between surface points:
 \begin{equation}
     d(p, \partial Y) = \min_{y \in \partial Y} \|p - y\|_2, \qquad d(y, \partial P) = \min_{p \in \partial P} \|y - p\|_2
@@ -991,5 +992,334 @@ This research was supported by the Master's Thesis Laboratory and computational 
 
 \bibliographystyle{plainnat}
 \bibliography{references}
+
+\newpage
+\appendix
+
+\section{Comprehensive Mathematical Notation and Glossary of Symbols}
+\label{sec:appendix_math_notation}
+
+To provide complete mathematical rigor, reproducibility, and cross-disciplinary clarity, this appendix provides an exhaustive reference of all mathematical symbols, variable identifiers, architectural dimensions, operators, and statistical metrics utilized throughout this paper.
+
+\subsection{Notational and Typographical Conventions}
+We adhere strictly to the following typographical standards:
+\begin{itemize}
+    \item \textbf{Tensors and Matrices}: Denoted by uppercase bold Roman letters (e.g., $\mathbf{X}, \mathbf{Z}, \mathbf{M}, \Sigma, \mathbf{W}$).
+    \item \textbf{Vectors}: Denoted by lowercase bold Roman letters (e.g., $\mathbf{z}, \mathbf{u}, \mathbf{p}, \mathbf{y}, \mathbf{e}_{\text{mask}}$).
+    \item \textbf{Scalars, Dimensions, and Hyperparameters}: Denoted by lowercase or uppercase italic Roman or Greek letters (e.g., $B, C, H, W, D, N, \lambda, \tau, \epsilon$).
+    \item \textbf{Sets, Subspaces, and Manifolds}: Denoted by calligraphic script or blackboard bold (e.g., $\mathcal{I}_{\text{ctx}}, \mathcal{I}_{\text{tgt}}, \mathcal{B}_0, \Omega_{\text{fg}}, \mathbb{R}^D, \mathbb{S}^{d_p - 1}$).
+    \item \textbf{Neural Networks and Operators}: Denoted by uppercase Roman letters with parameter subscripts (e.g., Context Encoder $E_\theta$, Target Teacher Encoder $E_{\bar{\theta}}$, Predictor $P_\phi$, Projector MLP $g_\psi$).
+    \item \textbf{Indexing}: Slices within a mini-batch are indexed by $b \in \{1, \dots, B\}$; feature channels by $j \in \{1, \dots, D\}$; patch tokens by $i \in \{1, \dots, N\}$; and target blocks by $k \in \{1, \dots, K\}$.
+\end{itemize}
+
+\subsection{Structured Notation Reference Tables}
+
+Tables~\ref{tab:notation_data}--\ref{tab:notation_ood} categorize all mathematical notations into seven thematic groups.
+
+\begin{table}[ht]
+\centering
+\caption{Mathematical notation for Multi-Modal Input Data, Patient Cohorts, and Preprocessing.}
+\label{tab:notation_data}
+\vspace{0.4em}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcp{8.2cm}}
+\toprule
+\textbf{Notation} & \textbf{Domain / Space} & \textbf{Type} & \textbf{Mathematical Definition \& Physical / Clinical Role} \\
+\midrule
+$X$ & $\mathbb{R}^{B \times C \times H \times W}$ & Tensor & Raw 4-channel 2D axial brain MRI slice batch. \\
+$B$ & $\mathbb{N}^+$ & Scalar & Mini-batch size of 2D axial slices ($B = 8$ for pre-training, $B = 32$ for evaluation). \\
+$C$ & $\mathbb{N}^+$ & Scalar & Number of co-registered MRI sequence channels ($C = 4$). \\
+$H, W$ & $\mathbb{N}^+$ & Scalar & Spatial height and width of 2D axial slices ($H = W = 240\,\text{pixels}$). \\
+$X_{\text{T1}}$ & $\mathbb{R}^{B \times H \times W}$ & Tensor & T1-weighted sequence probing longitudinal spin-lattice relaxation ($T_1$). \\
+$X_{\text{T1c}}$ & $\mathbb{R}^{B \times H \times W}$ & Tensor & Post-contrast T1-weighted sequence highlighting broken blood-brain barrier vascularization. \\
+$X_{\text{T2}}$ & $\mathbb{R}^{B \times H \times W}$ & Tensor & T2-weighted sequence probing transverse relaxation ($T_2$), depicting vasogenic edema. \\
+$X_{\text{FLAIR}}$ & $\mathbb{R}^{B \times H \times W}$ & Tensor & Fluid-attenuated inversion recovery sequence suppressing free CSF signal. \\
+$\Omega_{\text{fg}}$ & Coordinate Set & Support & Non-zero anatomical brain tissue foreground mask: $\{(h, w) \mid \sum_c X_{b, c, h, w}^2 > 0\}$. \\
+$\mu_c, \sigma_c$ & $\mathbb{R}$ & Scalar & Foreground empirical mean and standard deviation for sequence channel $c \in \{1, \dots, C\}$. \\
+$\hat{X}$ & $\mathbb{R}^{B \times C \times H \times W}$ & Tensor & Standardized foreground slice batch with zeroed background: $(X - \mu) / (\sigma + \epsilon) \odot \mathbb{I}(\Omega_{\text{fg}})$. \\
+$\epsilon$ & $\mathbb{R}^+$ & Scalar & Numerical stabilization constant ($10^{-8}$ for Z-score normalization; $10^{-5}$ for Dice/IoU zero-division guard). \\
+$p_{\text{drop}}$ & $[0, 1)$ & Scalar & Probability of stochastically zeroing out an MRI sequence channel ($p_{\text{drop}} = 0.25$). \\
+$\mathbf{M}$ & $\{0, 1\}^{B \times C \times 1 \times 1}$ & Tensor & Stochastic binary channel mask sampled for Random Modality Dropout (RMD). \\
+$\mathbf{A}_{\text{zero}}$ & $\{0, 1\}^B$ & Vector & Boolean indicator vector identifying batch slices where all $C$ channels were dropped. \\
+$c^*$ & $\{1, \dots, C\}^B$ & Vector & Uniformly sampled sequence channels assigned to active fallback for all-zero slices. \\
+$\tilde{X}$ & $\mathbb{R}^{B \times C \times H \times W}$ & Tensor & Modality-augmented slice batch obtained via broadcast multiplication: $\tilde{X} = \hat{X} \odot \mathbf{M}$. \\
+$\odot$ & N/A & Operator & Hadamard (element-wise) broadcast product between tensors. \\
+$\mathcal{P}_{\text{train}}$ & Set of Patient IDs & Partition & Training patient cohort ($1,266$ volumes / $6,330$ slices, $70\%$ partition). \\
+$\mathcal{P}_{\text{val}}$ & Set of Patient IDs & Partition & Validation patient cohort ($181$ volumes / $905$ slices, $10\%$ partition). \\
+$\mathcal{P}_{\text{test}}$ & Set of Patient IDs & Partition & Held-out test patient cohort ($362$ volumes / $1,810$ slices, $20\%$ partition). \\
+$V(p)$ & $\mathbb{N}_0$ & Scalar & Total cumulative tumor voxel volume for patient $p$: $V(p) = \sum_{v} Y_p(v)$. \\
+$\mathcal{Q}_0, \dots, \mathcal{Q}_3$ & Subsets of Patients & Partition & Patient cohorts stratified into quartiles based on cumulative tumor volume distribution. \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Mathematical notation for Vision Transformer Backbone, Patch Masking, and Predictor Architecture.}
+\label{tab:notation_vit}
+\vspace{0.4em}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcp{8.2cm}}
+\toprule
+\textbf{Notation} & \textbf{Domain / Space} & \textbf{Type} & \textbf{Mathematical Definition \& Physical / Architectural Role} \\
+\midrule
+$P$ & $\mathbb{N}^+$ & Scalar & Spatial patch kernel size ($P = 16\,\text{pixels}$). \\
+$N$ & $\mathbb{N}^+$ & Scalar & Total number of non-overlapping patch tokens per slice: $N = (240/16)^2 = 15 \times 15 = 225$. \\
+$D$ & $\mathbb{N}^+$ & Scalar & Vision Transformer latent token embedding dimension ($D = 384$). \\
+$\mathbf{E}_{\text{pos}}$ & $\mathbb{R}^{1 \times N \times D}$ & Tensor & Learnable 1D spatial positional embeddings initialized from $\mathcal{TN}(0, 0.02^2)$. \\
+$\mathbf{Z}^{(0)}$ & $\mathbb{R}^{B \times N \times D}$ & Tensor & Initial patch token embeddings after patch projection and positional addition: $\text{Conv}_{16\times 16}(\tilde{X}) + \mathbf{E}_{\text{pos}}$. \\
+$L$ & $\mathbb{N}^+$ & Scalar & Depth of Vision Transformer Encoder backbone ($L = 8$ Transformer blocks). \\
+$\mathbf{Z}^{(l)}$ & $\mathbb{R}^{B \times N \times D}$ & Tensor & Latent patch token embeddings output by the $l$-th Transformer Encoder block ($l \in \{1, \dots, L\}$). \\
+$\text{MHSA}(\cdot)$ & Operator & Module & Multi-Head Self-Attention operator computing scaled dot-product attention across heads. \\
+$\text{LN}(\cdot)$ & Operator & Module & Pre-Layer Normalization operator computing channel-wise zero-mean, unit-variance standardization. \\
+$h$ & $\mathbb{N}^+$ & Scalar & Number of parallel self-attention heads ($h = 6$). \\
+$d_k$ & $\mathbb{N}^+$ & Scalar & Key/Query dimension capacity per attention head ($d_k = D / h = 64$). \\
+$Q, K, V$ & $\mathbb{R}^{B \times h \times N_{\text{tokens}} \times d_k}$ & Tensor & Linear Query, Key, and Value projections: $Q = \mathbf{Z} \mathbf{W}_Q, K = \mathbf{Z} \mathbf{W}_K, V = \mathbf{Z} \mathbf{W}_V$. \\
+$\mathbf{W}_Q, \mathbf{W}_K, \mathbf{W}_V$ & $\mathbb{R}^{D \times D}$ & Matrix & Learnable linear projection parameter matrices for attention queries, keys, and values. \\
+$D_{\text{ff}}$ & $\mathbb{N}^+$ & Scalar & Hidden channel expansion dimension of feed-forward MLP sub-layer ($D_{\text{ff}} = 4D = 1536$). \\
+$\mathcal{I}_{\text{ctx}}$ & $\subset \{1, \dots, N\}$ & Index Set & Spatial indices of unmasked context patches ($|\mathcal{I}_{\text{ctx}}| = N_{\text{ctx}} = 96$ patches, $\approx 42.7\%$ area). \\
+$\mathcal{I}_{\text{tgt}}^{(k)}$ & $\subset \{1, \dots, N\}$ & Index Set & Spatial indices of masked target patches for block $k \in \{1, \dots, K\}$ ($|\mathcal{I}_{\text{tgt}}^{(k)}| = N_{\text{tgt}} = 25$ patches). \\
+$K$ & $\mathbb{N}^+$ & Scalar & Number of independently sampled spatial target blocks ($K = 4$). \\
+$H_{\text{grid}}, W_{\text{grid}}$ & $\mathbb{N}^+$ & Scalar & Dimensions of patch token spatial grid ($H_{\text{grid}} = W_{\text{grid}} = 15$). \\
+$H_{\text{tgt}}, W_{\text{tgt}}$ & $\mathbb{N}^+$ & Scalar & Dimensions of target patch blocks ($H_{\text{tgt}} = W_{\text{tgt}} = 5$). \\
+$(t_k, l_k)$ & $\mathbb{N}_0^2$ & Tuple & Top-left grid coordinates uniformly sampled for target block $k$. \\
+$\mathcal{C}_{\text{clean}}$ & $\subset \{1, \dots, N\}$ & Index Set & Candidate context patches filtered to guarantee zero spatial overlap with any target block. \\
+$\mathcal{N}_4(r, c)$ & Set of Coordinates & Operator & 4-connected spatial grid neighborhood: $\{(r\pm 1, c), (r, c\pm 1)\}$. \\
+$\mathbf{Z}_{\text{ctx}}$ & $\mathbb{R}^{B \times N_{\text{ctx}} \times D}$ & Tensor & Latent context patch representations emitted by online encoder $E_\theta$. \\
+$P_\phi$ & Architecture & Module & Narrow 4-block Transformer predictor parameterized by weights $\phi$. \\
+$D_{\text{pred}}$ & $\mathbb{N}^+$ & Scalar & Predictor latent embedding dimension ($D_{\text{pred}} = 192 = D/2$). \\
+$\mathbf{Z}_{\text{ctx, proj}}$ & $\mathbb{R}^{B \times N_{\text{ctx}} \times D_{\text{pred}}}$ & Tensor & Context tokens projected to predictor dimension: $\text{Linear}_{384 \to 192}(\mathbf{Z}_{\text{ctx}})$. \\
+$\mathbf{e}_{\text{mask}}$ & $\mathbb{R}^{1 \times 1 \times D_{\text{pred}}}$ & Vector & Shared learnable mask token query vector initialized from $\mathcal{TN}(0, 0.02^2)$. \\
+$\mathbf{P}_{\text{ctx}}, \mathbf{P}_{\text{tgt}}$ & Tensor & Tensor & Decoupled positional embeddings retrieved for context and target patch queries. \\
+$\mathbf{M}_{\text{tgt}}$ & $\mathbb{R}^{B \times N_{\text{tgt}} \times D_{\text{pred}}}$ & Tensor & Expanded target mask token sequence with positional embeddings: $\mathbf{e}_{\text{mask}} + \mathbf{P}_{\text{tgt}}$. \\
+$\mathbf{Z}_{\text{pred}}^{(0)}$ & $\mathbb{R}^{B \times (N_{\text{ctx}} + N_{\text{tgt}}) \times D_{\text{pred}}}$ & Tensor & Concatenated sequence input to predictor Transformer: $[ (\mathbf{Z}_{\text{ctx, proj}} + \mathbf{P}_{\text{ctx}}) \,;\, \mathbf{M}_{\text{tgt}} ]$. \\
+$\hat{Y}_{\text{tgt}}$ & $\mathbb{R}^{B \times N_{\text{tgt}} \times D}$ & Tensor & Predicted target patch embeddings projected back to encoder dimension: $\text{Linear}_{192 \to 384}(\dots)$. \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Mathematical notation for Dual-Encoder I-JEPA Objectives and Target Momentum Dynamics.}
+\label{tab:notation_jepa}
+\vspace{0.4em}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcp{8.2cm}}
+\toprule
+\textbf{Notation} & \textbf{Domain / Space} & \textbf{Type} & \textbf{Mathematical Definition \& Physical / Theoretical Role} \\
+\midrule
+$E_\theta, E_{\bar{\theta}}$ & Architecture & Module & Online context encoder ($\theta$) and target teacher encoder ($\bar{\theta}$) in dual-encoder I-JEPA. \\
+$m$ & $[0.996, 1.0]$ & Scalar & Exponential Moving Average (EMA) momentum update parameter: $\bar{\theta}_t \leftarrow m \bar{\theta}_{t-1} + (1-m)\theta_t$. \\
+$Y_{\text{tgt}}$ & $\mathbb{R}^{B \times N_{\text{tgt}} \times D}$ & Tensor & Ground-truth target patch representations extracted from target encoder $E_{\bar{\theta}}(X)[:, \mathcal{I}_{\text{tgt}}, :]$. \\
+$\tilde{Y}_{\text{tgt}}$ & $\mathbb{R}^{B \times N_{\text{tgt}} \times D}$ & Tensor & Asymmetrically Layer-Normalized target representations: $\text{LayerNorm}(Y_{\text{tgt}})$. \\
+$\mu(Y_{\text{tgt}}), \sigma(Y_{\text{tgt}})$ & $\mathbb{R}$ & Scalar & Target token empirical mean and standard deviation computed over latent channel dimension $D$. \\
+$\gamma, \beta$ & $\mathbb{R}^D$ & Vector & Learnable affine scale (gain) and shift (bias) parameters in LayerNorm. \\
+$\text{Smooth}_{L_1}(\cdot)$ & $\mathbb{R} \to \mathbb{R}^+$ & Loss & Huber loss function: $0.5 x^2$ for $|x| < 1.0$; $|x| - 0.5$ otherwise. \\
+$\mathcal{L}_{\text{I-JEPA}}$ & $\mathbb{R}^+$ & Loss & Huber prediction loss between predicted tokens $\hat{Y}_{\text{tgt}}$ and normalized targets $\tilde{Y}_{\text{tgt}}$. \\
+$g_\psi$ & Architecture & Module & 2-layer Projector MLP acting as an Information Bottleneck: $\mathbb{R}^{384} \to \mathbb{R}^{1024} \to \mathbb{R}^{128}$. \\
+$d_p$ & $\mathbb{N}^+$ & Scalar & Projected representation dimension for sketching tests ($d_p = 128$). \\
+$Z_{\text{proj}}$ & $\mathbb{R}^{(B \cdot N_{\text{ctx}}) \times d_p}$ & Matrix & Projected context token representations evaluated under non-collapse penalties. \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Mathematical notation for Sketched Representation Regularization (SIGReg and VISReg).}
+\label{tab:notation_regularization}
+\vspace{0.4em}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcp{8.2cm}}
+\toprule
+\textbf{Notation} & \textbf{Domain / Space} & \textbf{Type} & \textbf{Mathematical Definition \& Physical / Theoretical Role} \\
+\midrule
+$M$ & $\mathbb{N}^+$ & Scalar & Number of 1D random hyperspherical projection vectors ($M = 256$). \\
+$\mathbb{S}^{d_p - 1}$ & Manifold & Set & Unit hypersphere in $\mathbb{R}^{d_p}$: $\{\mathbf{u} \in \mathbb{R}^{d_p} \mid \|\mathbf{u}\|_2 = 1\}$. \\
+$\mathbf{u}_m$ & $\mathbb{S}^{d_p - 1}$ & Vector & $m$-th random unit projection vector sampled from $\mathcal{N}(0, \mathbf{I})$ and normalized. \\
+$p_m$ & $\mathbb{R}^{N_{\text{total}}}$ & Vector & 1D projection of projected tokens onto $\mathbf{u}_m$: $p_m = Z_{\text{proj}} \mathbf{u}_m \in \mathbb{R}^N$ ($N = B \cdot N_{\text{ctx}}$). \\
+$\hat{\phi}_N(t)$ & $\mathbb{C}$ & Function & Empirical characteristic function (ECF) at frequency $t$: $\frac{1}{N} \sum_{n=1}^N \exp(i t p_n)$. \\
+$\phi_0(t)$ & $\mathbb{R}^+$ & Function & Analytical characteristic function of standard normal distribution: $\phi_0(t) = \exp(-t^2 / 2)$. \\
+$d\mu(t)$ & $\mathbb{R}^+$ & Measure & Standard Gaussian weighting integration measure: $d\mu(t) = \exp(-t^2/2) dt$. \\
+$\mathcal{T}_{\text{EP}}(p)$ & $\mathbb{R}^+$ & Statistic & Epps--Pulley test statistic measuring $L_2$ divergence between empirical and normal ECF. \\
+$t_{\text{max}}, Q$ & $\mathbb{R}^+, \mathbb{N}^+$ & Hyperparam & Maximum quadrature frequency ($t_{\text{max}} = 3.0$) and number of quadrature knot points ($Q = 17$). \\
+$w_k$ & $\mathbb{R}^+$ & Scalar & Trapezoidal quadrature weights with interior folded-symmetry factor of 2. \\
+$\lambda_{\text{SIGReg}}$ & $\mathbb{R}^+$ & Hyperparam & Loss weighting parameter for Epps--Pulley non-collapse penalty ($\lambda_{\text{SIGReg}} = 1.0$). \\
+$\bar{\mathbf{z}}$ & $\mathbb{R}^{d_p}$ & Vector & Empirical mean feature activation vector evaluated across batch tokens: $\frac{1}{K} \sum_{i=1}^K \mathbf{z}_i$. \\
+$\mathbf{z}_{c, i}$ & $\mathbb{R}^{d_p}$ & Vector & Mean-centered token activation vector: $\mathbf{z}_{c, i} = \mathbf{z}_i - \bar{\mathbf{z}}$. \\
+$\sigma_d$ & $\mathbb{R}^+$ & Scalar & Empirical coordinate standard deviation along dimension $d$: $\sqrt{\frac{1}{K} \sum_{i} z_{c, i, d}^2 + \epsilon}$. \\
+$\sigma_0$ & $\mathbb{R}^+$ & Scalar & Target coordinate standard deviation ($\sigma_0 = 1.0$). \\
+$\mathcal{L}_{\text{scale}}$ & $\mathbb{R}^+$ & Loss & Two-sided squared scale penalty anchoring coordinate variances to unit scale: $\frac{1}{d_p} \sum (\sigma_0 - \sigma_d)^2$. \\
+$\mathbf{z}_{s, i, d}$ & $\mathbb{R}$ & Scalar & Standardized token activation along coordinate $d$ using stop-gradient scale: $z_{c, i, d} / (\text{sg}(\sigma_d) + \epsilon)$. \\
+$\text{sg}(\cdot)$ & Operator & Function & Stop-gradient operator preventing gradient flow through scale normalization: $\nabla_{\mathbf{x}} \text{sg}(\mathbf{x}) \equiv \mathbf{0}$. \\
+$y_{(i), m}$ & $\mathbb{R}$ & Scalar & $i$-th sorted order statistic (empirical quantile) along projection direction $\mathbf{u}_m$. \\
+$\Phi^{-1}(\cdot)$ & $(0, 1) \to \mathbb{R}$ & Function & Standard normal quantile function (probit function / inverse CDF of $\mathcal{N}(0, 1)$). \\
+$\text{erf}^{-1}(\cdot)$ & $(-1, 1) \to \mathbb{R}$ & Function & Inverse Gauss error function: $\Phi^{-1}(q) = \sqrt{2} \text{erf}^{-1}(2q - 1)$. \\
+$\mathcal{W}_2$ & $\mathbb{R}^+$ & Metric & 1D Sliced-Wasserstein Distance against reference Gaussian distribution. \\
+$\mathcal{L}_{\text{shape}}$ & $\mathbb{R}^+$ & Loss & VisReg distributional shape regularizer penalizing non-Gaussian higher-order moments. \\
+$\lambda_{\text{scale}}, \lambda_{\text{shape}}$ & $\mathbb{R}^+$ & Hyperparam & VisReg loss penalty weighting hyperparameters ($\lambda_{\text{scale}} = 1.0, \lambda_{\text{shape}} = 1.0$). \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Mathematical notation for Convolutional Baselines, Decoders, and Deep Supervision.}
+\label{tab:notation_baselines}
+\vspace{0.4em}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcp{8.2cm}}
+\toprule
+\textbf{Notation} & \textbf{Domain / Space} & \textbf{Type} & \textbf{Mathematical Definition \& Physical / Architectural Role} \\
+\midrule
+$\mathbf{x}_{\text{enc}}^{(l)}, \mathbf{x}_{\text{dec}}^{(l)}$ & $\mathbb{R}^{B \times C_l \times H_l \times W_l}$ & Tensor & Encoder and decoder convolutional feature maps at stage level $l \in \{1, \dots, 5\}$. \\
+$\text{IN}(\cdot)$ & Operator & Module & Instance Normalization computing mean and variance independently per-sample per-channel. \\
+$\mathbf{X}_{\text{bot}}$ & $\mathbb{R}^{B \times 384 \times 15 \times 15}$ & Tensor & Spatial bottleneck tensor unflattened from ViT layer $L=8$ tokens: $\text{Reshape}_{15\times 15}(\mathbf{Z}^{(8)})$. \\
+$\mathbf{X}_1, \dots, \mathbf{X}_4$ & Tensor & Tensor & Progressively upsampled feature maps in 4-stage transposed-convolution pure bottleneck decoder. \\
+$\mathcal{Z}_{\text{multi}}$ & Set of Tensors & Feature Set & Multi-scale intermediate ViT representations: $\{\mathbf{Z}^{(L_2)}, \mathbf{Z}^{(L_4)}, \mathbf{Z}^{(L_6)}, \mathbf{Z}^{(L_8)}\}$. \\
+$\mathbf{F}_l$ & $\mathbb{R}^{B \times C_l \times 15 \times 15}$ & Tensor & Channel-projected 2D feature map from intermediate ViT block $l$ ($C_l \in \{256, 128, 64, 32\}$). \\
+$\mathbf{H}_k$ & $\mathbb{R}^{B \times C_k \times H_k \times W_k}$ & Tensor & Hierarchically fused feature map in multi-scale pyramid decoder: $\text{ResBlock}([\text{Upsample}(\mathbf{H}_{k-1}) ; \mathbf{F}_k])$. \\
+$S$ & $\mathbb{N}^+$ & Scalar & Number of multi-scale supervision stages ($S = 4$). \\
+$\hat{Y}_s$ & $\mathbb{R}^{B \times 1 \times H_s \times W_s}$ & Tensor & Auxiliary segmentation prediction logits at stage $s \in \{1, \dots, S\}$ ($240^2, 120^2, 60^2, 30^2$). \\
+$Y_s$ & $\{0, 1\}^{B \times 1 \times H_s \times W_s}$ & Tensor & Discrete binary ground-truth mask downsampled to stage $s$ via nearest-neighbor interpolation. \\
+$w_s$ & $\mathbb{R}^+$ & Scalar & Normalized exponential decay weight for stage $s$: $w_s = 2^{-(s-1)} / \sum_{j=1}^S 2^{-(j-1)}$ ($\sum w_s = 1.0$). \\
+$\mathcal{L}_{\text{deep\_sup}}$ & $\mathbb{R}^+$ & Loss & Multi-scale deep supervision loss objective summing weighted intermediate Dice and BCE losses. \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Mathematical notation for Downstream Segmentation Loss Functions and Evaluation Metrics.}
+\label{tab:notation_metrics}
+\vspace{0.4em}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcp{8.2cm}}
+\toprule
+\textbf{Notation} & \textbf{Domain / Space} & \textbf{Type} & \textbf{Mathematical Definition \& Physical / Evaluative Role} \\
+\midrule
+$\hat{Y}$ & $\mathbb{R}^{H \times W}$ & Tensor & Continuous unthresholded segmentation logit map emitted by the decoder. \\
+$P$ & $\{0, 1\}^{H \times W}$ & Tensor & Thresholded binary segmentation prediction mask: $P = \mathbb{I}(\sigma(\hat{Y}) > 0.5)$. \\
+$Y$ & $\{0, 1\}^{H \times W}$ & Tensor & Ground-truth binary segmentation mask (1: tumor lesion voxel, 0: background non-tumor tissue). \\
+$\sigma(\cdot)$ & $\mathbb{R} \to (0, 1)$ & Function & Standard logistic sigmoid function: $\sigma(z) = (1 + \exp(-z))^{-1}$. \\
+$N_{\text{vox}}$ & $\mathbb{N}^+$ & Scalar & Total pixel count per 2D axial slice: $N_{\text{vox}} = 240 \times 240 = 57,600\,\text{pixels}$. \\
+$\text{TP}, \text{FP}, \text{FN}$ & $\mathbb{N}_0$ & Scalar & True Positive ($\sum P_i Y_i$), False Positive ($\sum P_i (1-Y_i)$), and False Negative ($\sum (1-P_i) Y_i$) counts. \\
+$\mathcal{L}_{\text{Dice}}$ & $[0, 1]$ & Loss & Soft Dice volumetric overlap loss: $1.0 - (2 \sum \sigma(\hat{Y}_i) Y_i + \epsilon) / (\sum \sigma(\hat{Y}_i) + \sum Y_i + \epsilon)$. \\
+$\mathcal{L}_{\text{BCE}}$ & $\mathbb{R}^+$ & Loss & Binary Cross-Entropy loss providing smooth, convex pixel-level probability gradients. \\
+$\mathcal{L}_{\text{total}}$ & $\mathbb{R}^+$ & Loss & Combined segmentation loss objective: $\mathcal{L}_{\text{Dice}} + \mathcal{L}_{\text{BCE}}$. \\
+$\text{Dice}(P, Y)$ & $[0, 1]$ & Metric & Dice Similarity Coefficient (DSC): $(2|\text{TP}| + \epsilon) / (2|\text{TP}| + |\text{FP}| + |\text{FN}| + \epsilon)$. \\
+$\overline{\text{Dice}}_{\text{macro}}$ & $[0, 1]$ & Metric & Unstratified macro-average Dice evaluated across all $N_{\text{test}}$ test slices. \\
+$\text{Dice}_{\text{tumor}}$ & $[0, 1]$ & Metric & Stratified macro-average Dice evaluated exclusively over tumor-bearing slices $\mathcal{B}_{\text{tumor}}$. \\
+$\mathcal{B}_0$ & Index Set & Subset & Set of slices containing zero tumor voxels ($|Y| = 0$, true-negative slices). \\
+$\mathcal{B}_{\text{tumor}}$ & Index Set & Subset & Set of slices containing non-zero tumor voxels ($|Y| > 0$). \\
+$\alpha$ & $[0, 1]$ & Scalar & Ratio of tumor-free true-negative slices in evaluation split: $\alpha = |\mathcal{B}_0| / N_{\text{test}}$ ($\alpha \approx 0.4648$). \\
+$\mathbf{V}_P^{(k)}, \mathbf{V}_Y^{(k)}$ & $\{0, 1\}^{H \times W \times Z_k}$ & Volume & 3D reconstructed patient prediction and ground-truth volumes stacked along physical slice index $z$. \\
+$\text{Dice}_{\text{3D}}^{(k)}$ & $[0, 1]$ & Metric & Official BraTS 3D patient volumetric Dice evaluated across reconstructed volume $\mathbf{V}_P^{(k)}$ and $\mathbf{V}_Y^{(k)}$. \\
+$\text{IoU}(P, Y)$ & $[0, 1]$ & Metric & Intersection over Union (Jaccard Index): $\text{Dice} / (2 - \text{Dice})$. \\
+$\partial P, \partial Y$ & Set of Coordinates & Contour & Morphological boundary contour point sets: $\partial P = \text{argwhere}((P \oplus \mathbf{K}) \setminus P)$. \\
+$\mathbf{K}$ & Binary Kernel & Structuring & Flat structuring element ($3 \times 3$ square in 2D, 26-connectivity cube in 3D). \\
+$d(p, \partial Y)$ & $\mathbb{R}^+$ & Scalar & Minimum Euclidean distance from surface point $p \in \partial P$ to target contour $\partial Y$: $\min_{y} \|p - y\|_2$. \\
+$\mathcal{P}_{\text{95\%}}$ & Operator & Function & 95th percentile operator eliminating boundary outlier noise. \\
+$\text{HD95}$ & $\mathbb{R}^+$ & Metric & Symmetric 95th percentile Hausdorff Distance in spatial pixels ($\text{HD95} = 0\,\text{px}$ if $P=Y=\emptyset$). \\
+$\bar{Z}$ & $\mathbb{R}^{M \times D}$ & Matrix & Mean-centered token representation matrix over $M = 1,000$ sampled patch tokens ($D = 384$). \\
+$\Sigma$ & $\mathbb{R}^{D \times D}$ & Matrix & Empirical sample covariance matrix: $\Sigma = \frac{1}{M-1} \bar{Z}^T \bar{Z}$. \\
+$s_i, \lambda_i$ & $\mathbb{R}^+$ & Scalar & $i$-th singular value of $\bar{Z}$ and corresponding covariance eigenvalue: $\lambda_i = \frac{s_i^2}{M-1} \propto s_i^2$. \\
+$p_i$ & $[0, 1]$ & Scalar & Normalized spectral probability mass along principal axis $i$: $p_i = s_i^2 / \sum_{j=1}^D s_j^2$. \\
+$\text{Rank}_{\text{eff}}(Z)$ & $[1, D]$ & Metric & Effective Feature Rank evaluated as exponential of spectral Shannon entropy: $\exp(-\sum p_i \ln(p_i + 10^{-12}))$. \\
+$S_{\text{cosine}}(Z)$ & $[-1, 1]$ & Metric & Average Pairwise Cosine Similarity between distinct token vectors on the unit hypersphere. \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Mathematical notation for Out-of-Distribution Perturbations and Scanner Acquisition Physics.}
+\label{tab:notation_ood}
+\vspace{0.4em}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcp{8.2cm}}
+\toprule
+\textbf{Notation} & \textbf{Domain / Space} & \textbf{Type} & \textbf{Mathematical Definition \& Physical / Diagnostic Role} \\
+\midrule
+$S_{\text{raw}}$ & $\mathbb{C}$ & Variable & Raw complex radiofrequency (RF) signal voltage acquired across receiver coils: $S_r + i S_i$. \\
+$n_r, n_i$ & $\mathbb{R}$ & Random Var & Independent zero-mean Gaussian thermal noise in quadrature channels: $n_r, n_i \sim \mathcal{N}(0, \sigma_{\text{RF}}^2)$. \\
+$M$ & $\mathbb{R}^+$ & Random Var & Reconstructed magnitude MRI intensity: $M = \sqrt{(S_r + n_r)^2 + (S_i + n_i)^2}$. \\
+$\nu$ & $\mathbb{R}^+$ & Scalar & True noiseless signal intensity amplitude: $\nu = \sqrt{S_r^2 + S_i^2}$. \\
+$I_0(\cdot)$ & $\mathbb{R}^+ \to \mathbb{R}^+$ & Function & Zeroth-order modified Bessel function of the first kind: $I_0(z) = \frac{1}{\pi} \int_0^\pi \exp(z \cos\theta) d\theta$. \\
+$\text{SNR}$ & $\mathbb{R}^+$ & Scalar & Physical Signal-to-Noise Ratio: $\text{SNR} = \nu / \sigma_{\text{RF}}$. \\
+$\mathbf{N}$ & $\mathbb{R}^{H \times W}$ & Tensor & Additive zero-mean Gaussian noise tensor simulating low-field (1.5T) acquisition noise. \\
+$\sigma_{\text{noise}}$ & $\mathbb{R}^+$ & Scalar & Standard deviation of synthetic acquisition noise ($\sigma_{\text{noise}} = 0.15$). \\
+$\mathbf{B}_1(x, y)$ & $\mathbb{R}$ & Function & Synthetic quadratic $B_1$ magnetic bias field simulating RF coil inhomogeneity: $s \cdot (x^2 + y^2 - 0.5)$. \\
+$s$ & $\mathbb{R}^+$ & Scalar & Bias field scale modulation parameter ($s = 0.35$). \\
+$\tilde{X}_{\text{noise}}$ & $\mathbb{R}^{B \times C \times H \times W}$ & Tensor & High-SNR asymptotic Rician noise perturbed slice batch: $(X + \mathbf{N}) \odot \mathbb{I}(X \neq 0)$. \\
+$\tilde{X}_{\text{bias}}$ & $\mathbb{R}^{B \times C \times H \times W}$ & Tensor & Synthetic $B_1$ bias field perturbed slice batch: $(X + \mathbf{B}_1) \odot \mathbb{I}(X \neq 0)$. \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\subsection{Extended Mathematical Definitions and Theoretical Mechanics}
+
+For completeness, we provide formal mathematical proofs and derivations for the foundational theoretical constructs underpinning our models.
+
+\begin{proposition}[Cram\'er-Wold Hyperspherical Sketching Theorem]
+\label{prop:cramer_wold}
+Let $P$ and $Q$ be two Borel probability measures on $\mathbb{R}^{d_p}$. If for all unit vectors $\mathbf{u} \in \mathbb{S}^{d_p - 1}$, the 1D push-forward probability measures $P_{\mathbf{u}} = \mathbf{u}_\# P$ and $Q_{\mathbf{u}} = \mathbf{u}_\# Q$ coincide (i.e., $P(\mathbf{u}^T \mathbf{z} \le t) = Q(\mathbf{u}^T \mathbf{z} \le t)$ for all $t \in \mathbb{R}$), then $P \equiv Q$ identically on $\mathbb{R}^{d_p}$.
+\end{proposition}
+
+\begin{proof}
+Let $\phi_P(\mathbf{t}) = \mathbb{E}_{\mathbf{z} \sim P}[\exp(i \mathbf{t}^T \mathbf{z})]$ denote the multivariate characteristic function of $P$ for $\mathbf{t} \in \mathbb{R}^{d_p}$. For any non-zero $\mathbf{t} \in \mathbb{R}^{d_p}$, let $r = \|\mathbf{t}\|_2 > 0$ and $\mathbf{u} = \mathbf{t} / r \in \mathbb{S}^{d_p - 1}$. Then:
+\begin{equation}
+    \phi_P(\mathbf{t}) = \mathbb{E}_{\mathbf{z} \sim P}[\exp(i r \mathbf{u}^T \mathbf{z})] = \phi_{P_{\mathbf{u}}}(r)
+\end{equation}
+Because $P_{\mathbf{u}} = Q_{\mathbf{u}}$ for all $\mathbf{u} \in \mathbb{S}^{d_p - 1}$, their 1D characteristic functions are identical: $\phi_{P_{\mathbf{u}}}(r) = \phi_{Q_{\mathbf{u}}}(r)$, which implies $\phi_P(\mathbf{t}) = \phi_Q(\mathbf{t})$ for all $\mathbf{t} \in \mathbb{R}^{d_p}$. By the uniqueness theorem for Fourier transforms of finite Borel measures, $P \equiv Q$.
+\end{proof}
+
+\begin{proposition}[Mathematical Derivation of the Epps--Pulley Sample Scaling Factor $N$]
+\label{prop:epps_pulley_scaling}
+Let $p_1, \dots, p_N \in \mathbb{R}$ be 1D projected sample scalars, and let $\hat{\phi}_N(t) = \frac{1}{N} \sum_{n=1}^N \exp(i t p_n)$ denote their empirical characteristic function. Under the null hypothesis $H_0: p \sim \mathcal{N}(0, 1)$, the unweighted squared error integral $I = \int_{-\infty}^\infty |\hat{\phi}_N(t) - \phi_0(t)|^2 d\mu(t)$ satisfies $I = \mathcal{O}_p(1/N)$. Multiplying by the sample count $N$ yields a non-degenerate test statistic $\mathcal{T}_{\text{EP}} = N \cdot I$ whose gradient with respect to sample tokens satisfies $\|\nabla_{p_i} \mathcal{T}_{\text{EP}}\| = \mathcal{O}(1)$.
+\end{proposition}
+
+\begin{proof}
+By the Central Limit Theorem for empirical processes, $\sqrt{N}(\hat{\phi}_N(t) - \phi_0(t))$ converges in distribution to a zero-mean complex Gaussian process $\mathbb{G}(t)$ with covariance kernel $K(s, t) = \phi_0(s - t) - \phi_0(s)\phi_0(t)$. Therefore, $\mathbb{E}[|\hat{\phi}_N(t) - \phi_0(t)|^2] = \frac{1}{N} (1 - \phi_0(2t) - 2\phi_0(t)^2 + 2\phi_0(t)^2) = \mathcal{O}(1/N)$. 
+Computing the gradient of $\mathcal{T}_{\text{EP}}$ with respect to sample scalar $p_i$:
+\begin{align}
+    \frac{\partial \mathcal{T}_{\text{EP}}}{\partial p_i} &= N \int_{-\infty}^\infty \frac{\partial}{\partial p_i} |\hat{\phi}_N(t) - \phi_0(t)|^2 d\mu(t) \\
+    &= N \int_{-\infty}^\infty 2 \, \text{Re}\left\{ (\hat{\phi}_N(t) - \phi_0(t))^* \cdot \frac{\partial \hat{\phi}_N(t)}{\partial p_i} \right\} d\mu(t) \\
+    &= N \int_{-\infty}^\infty 2 \, \text{Re}\left\{ (\hat{\phi}_N(t) - \phi_0(t))^* \cdot \frac{i t}{N} \exp(i t p_i) \right\} d\mu(t) \\
+    &= 2 \int_{-\infty}^\infty \text{Re}\left\{ (\hat{\phi}_N(t) - \phi_0(t))^* \cdot i t \exp(i t p_i) \right\} d\mu(t) = \mathcal{O}(1)
+\end{align}
+The factor $N$ cancels the $\frac{1}{N}$ derivative denominator, preventing representation gradients from vanishing during mini-batch optimization.
+\end{proof}
+
+\begin{proposition}[Asymptotic Equivalence of Rician and Gaussian Distributions at High SNR]
+\label{prop:rician_asymptotics}
+Let $M \sim \text{Rician}(\nu, \sigma_{\text{RF}})$. In the limit of high Signal-to-Noise Ratio ($\text{SNR} = \nu / \sigma_{\text{RF}} \to \infty$), $M$ converges in distribution to a Gaussian random variable:
+\begin{equation}
+    \frac{M - \nu}{\sigma_{\text{RF}}} \xrightarrow{d} \mathcal{N}(0, 1)
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+Let $z = M \nu / \sigma_{\text{RF}}^2 = \text{SNR} \cdot (M / \sigma_{\text{RF}})$. For large arguments $z \gg 1$, the modified Bessel function of the first kind $I_0(z)$ admits the asymptotic expansion:
+\begin{equation}
+    I_0(z) = \frac{\exp(z)}{\sqrt{2\pi z}} \left( 1 + \mathcal{O}(1/z) \right)
+\end{equation}
+Substituting this into the Rician probability density $p(M \mid \nu, \sigma_{\text{RF}}) = \frac{M}{\sigma_{\text{RF}}^2} \exp\left(-\frac{M^2 + \nu^2}{2\sigma_{\text{RF}}^2}\right) I_0\left(\frac{M\nu}{\sigma_{\text{RF}}^2}\right)$:
+\begin{align}
+    p(M \mid \nu, \sigma_{\text{RF}}) &= \frac{M}{\sigma_{\text{RF}}^2} \exp\left(-\frac{M^2 + \nu^2}{2\sigma_{\text{RF}}^2}\right) \frac{\exp(M\nu / \sigma_{\text{RF}}^2)}{\sqrt{2\pi M\nu / \sigma_{\text{RF}}^2}} \left( 1 + \mathcal{O}\left(\frac{\sigma_{\text{RF}}^2}{M\nu}\right) \right) \\
+    &= \frac{1}{\sqrt{2\pi \sigma_{\text{RF}}^2}} \sqrt{\frac{M}{\nu}} \exp\left( - \frac{(M - \nu)^2}{2\sigma_{\text{RF}}^2} \right) \left( 1 + \mathcal{O}\left(\frac{\sigma_{\text{RF}}^2}{M\nu}\right) \right)
+\end{align}
+As $\text{SNR} \to \infty$, $M / \nu \xrightarrow{p} 1$, so $\sqrt{M/\nu} \to 1$. Hence:
+\begin{equation}
+    \lim_{\text{SNR} \to \infty} p(M \mid \nu, \sigma_{\text{RF}}) = \frac{1}{\sqrt{2\pi \sigma_{\text{RF}}^2}} \exp\left( - \frac{(M - \nu)^2}{2\sigma_{\text{RF}}^2} \right) = \mathcal{N}(\nu, \sigma_{\text{RF}}^2)
+\end{equation}
+establishing the high-SNR asymptotic convergence.
+\end{proof}
 
 \end{document}

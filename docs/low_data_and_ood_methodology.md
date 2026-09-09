@@ -55,13 +55,27 @@ where $p_{\text{drop}} = 0.25$, and a fallback constraint guarantees that at lea
 
 We evaluate model robustness under two synthetic physical perturbations simulating scanner hardware variations:
 
-### 3.1 Rician Noise Shift (Low SNR / 1.5T Scanner Simulation)
-$$I_{\text{noisy}}(x, y) = \sqrt{\left(I(x, y) + \eta_1\right)^2 + \eta_2^2}, \qquad \eta_1, \eta_2 \sim \mathcal{N}(0, \sigma^2)$$
-where $\sigma = 0.15$ introduces realistic 1.5T scanner noise.
+### 3.1 Asymptotic Rician Noise Shift (Low SNR / 1.5T Scanner Simulation)
+In raw magnitude MRI data, acquisition noise follows a Rician distribution:
+$$M(x, y) = \sqrt{\left(S(x, y) + \eta_1\right)^2 + \eta_2^2}, \qquad \eta_1, \eta_2 \sim \mathcal{N}(0, \sigma^2)$$
+
+However, input slices undergo non-zero voxel Z-score standardization ($\mu=0, \sigma=1$), producing negative intensity values for sub-mean tissue. Applying the magnitude square-root operation directly to standardized inputs would non-physically rectify negative values to positive, destroying anatomical tissue contrast. 
+
+In clinical MRI regimes with sufficient Signal-to-Noise Ratio ($\text{SNR} \gg 1$), the Rician distribution converges asymptotically to a Gaussian:
+$$\text{Rician}(\nu, \sigma) \xrightarrow{\nu / \sigma \to \infty} \mathcal{N}\left(\nu, \, \sigma^2\right)$$
+
+Therefore, we simulate low-SNR scanner acquisition on standardized slices via foreground-masked additive Gaussian noise:
+$$I_{\text{noisy}}(x, y) = \left(I(x, y) + \eta\right) \cdot \mathbf{1}_{\{I(x, y) \ne 0\}}, \qquad \eta \sim \mathcal{N}(0, \sigma^2)$$
+where $\sigma = 0.15$ introduces realistic 1.5T scanner noise without distribution distortion.
 
 ### 3.2 $B_1$ Intensity Bias Field Shift (Coil Sensitivity Shift)
-$$I_{\text{bias}}(x, y) = I(x, y) \cdot \left(1.0 + \alpha \cdot (x^2 + y^2)\right)$$
-where $\alpha = 0.35$ induces smooth radial intensity decay from the image center.
+Radiofrequency (RF) coil sensitivity inhomogeneities induce smooth spatial gain variations across the field of view:
+$$\Delta B_1(x, y) = \alpha \cdot \left(x^2 + y^2 - 0.5\right)$$
+where $x, y \in [-1, 1]$ and $\alpha = 0.30$. 
+
+On zero-mean standardized inputs, an additive polynomial field shifts local baseline tissue contrast smoothly across the FOV while preserving relative intra-tissue contrast:
+$$I_{\text{bias}}(x, y) = \left(I(x, y) + \Delta B_1(x, y)\right) \cdot \mathbf{1}_{\{I(x, y) \ne 0\}}$$
+This models multi-channel phased-array coil profile decay without causing non-physical zero-crossings or inverted gradients.
 
 ---
 

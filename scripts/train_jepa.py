@@ -200,6 +200,7 @@ def main():
         epoch_start = time.perf_counter()
         model.train()
         train_loss_sum = 0.0
+        train_sublosses: dict[str, float] = {}
 
         for batch_idx, batch in enumerate(train_loader):
             if args.max_batches and batch_idx >= args.max_batches:
@@ -213,6 +214,7 @@ def main():
                 outputs = model(images, ctx_idx, tgt_idx_list)
                 if args.model_type == "ijepa":
                     loss = loss_fn(outputs["predictions"], outputs["targets"])
+                    loss_dict = {"loss": loss, "jepa_loss": loss}
                 elif args.model_type in ("sigreg_jepa", "visreg_jepa"):
                     loss_dict = loss_fn(
                         outputs["predictions"],
@@ -220,6 +222,10 @@ def main():
                         projected_tokens=outputs["projected_tokens"],
                     )
                     loss = loss_dict["loss"]
+
+            for k, v in loss_dict.items():
+                if isinstance(v, torch.Tensor):
+                    train_sublosses[k] = train_sublosses.get(k, 0.0) + v.item()
 
             if use_amp:
                 scaler.scale(loss).backward()
@@ -243,10 +249,12 @@ def main():
         scheduler.step()
         n_train_batches = min(len(train_loader), args.max_batches) if args.max_batches else len(train_loader)
         avg_train_loss = train_loss_sum / max(1, n_train_batches)
+        avg_train_sublosses = {f"train_{k}": v / max(1, n_train_batches) for k, v in train_sublosses.items()}
 
         # Validation
         model.eval()
         val_loss_sum = 0.0
+        val_sublosses: dict[str, float] = {}
         with torch.no_grad():
             for batch_idx, batch in enumerate(val_loader):
                 if args.max_batches and batch_idx >= args.max_batches:
@@ -258,27 +266,48 @@ def main():
                 with torch.amp.autocast(device_type=device.type, enabled=use_amp):
                     outputs = model(images, ctx_idx, tgt_idx_list)
                     if args.model_type == "ijepa":
-                        loss = loss_fn(outputs["predictions"], outputs["targets"])
+                        val_loss = loss_fn(outputs["predictions"], outputs["targets"])
+                        val_loss_dict = {"loss": val_loss, "jepa_loss": val_loss}
                     elif args.model_type in ("sigreg_jepa", "visreg_jepa"):
-                        loss = loss_fn(
+                        val_loss_dict = loss_fn(
                             outputs["predictions"],
                             outputs["targets"],
                             projected_tokens=outputs["projected_tokens"],
-                        )["loss"]
-                val_loss_sum += loss.item()
+                        )
+                        val_loss = val_loss_dict["loss"]
+                val_loss_sum += val_loss.item()
+                for k, v in val_loss_dict.items():
+                    if isinstance(v, torch.Tensor):
+                        val_sublosses[k] = val_sublosses.get(k, 0.0) + v.item()
 
         n_val_batches = min(len(val_loader), args.max_batches) if args.max_batches else len(val_loader)
         avg_val_loss = val_loss_sum / max(1, n_val_batches)
+        avg_val_sublosses = {f"val_{k}": v / max(1, n_val_batches) for k, v in val_sublosses.items()}
         epoch_duration = time.perf_counter() - epoch_start
 
-        logger.info(f"Epoch [{epoch:02d}/{args.epochs:02d}] | Train Loss: {avg_train_loss:.5f} | Val Loss: {avg_val_loss:.5f} | Duration: {epoch_duration:.2f}s")
+        if args.model_type == "sigreg_jepa":
+            loss_detail = f" (JEPA: {avg_train_sublosses.get('train_jepa_loss', 0):.4f}, SigReg: {avg_train_sublosses.get('train_sigreg_loss', 0):.4f})"
+        elif args.model_type == "visreg_jepa":
+            loss_detail = (
+                f" (JEPA: {avg_train_sublosses.get('train_jepa_loss', 0):.4f}, "
+                f"Ctr: {avg_train_sublosses.get('train_center_loss', 0):.4f}, "
+                f"Scl: {avg_train_sublosses.get('train_scale_loss', 0):.4f}, "
+                f"Shp: {avg_train_sublosses.get('train_shape_loss', 0):.4f})"
+            )
+        else:
+            loss_detail = ""
 
-        metric_tracker.update({
+        logger.info(f"Epoch [{epoch:02d}/{args.epochs:02d}] | Train Loss: {avg_train_loss:.5f}{loss_detail} | Val Loss: {avg_val_loss:.5f} | Duration: {epoch_duration:.2f}s")
+
+        epoch_metrics = {
             "epoch": epoch,
             "train_loss": avg_train_loss,
             "val_loss": avg_val_loss,
             "epoch_duration_sec": epoch_duration,
-        })
+            **avg_train_sublosses,
+            **avg_val_sublosses,
+        }
+        metric_tracker.update(epoch_metrics)
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss

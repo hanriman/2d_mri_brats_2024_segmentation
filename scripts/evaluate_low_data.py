@@ -178,7 +178,7 @@ def main():
     if use_amp:
         logger.info("CUDA Mixed Precision (AMP) enabled for low-data benchmark.")
 
-    ssl_base_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else CHECKPOINTS_DIR
+    ssl_base_dir = Path(args.checkpoint_dir).resolve() if args.checkpoint_dir else (base_out / "checkpoints" if (base_out / "checkpoints").exists() else CHECKPOINTS_DIR)
 
     loss_fn_bce = CombinedDiceBCELoss()
     loss_fn_ds = DeepSupervisionLoss()
@@ -284,7 +284,7 @@ def main():
         logger.info(f"Training nnU-Net SOTA Baseline on {frac*100:.0f}% labels...")
         t_start = time.perf_counter()
         nnunet = BraTS2DnnUNet(in_channels=4, out_channels=1, deep_supervision=True).to(device)
-        opt_nn = torch.optim.AdamW(nnunet.parameters(), lr=2e-4, weight_decay=1e-5)
+        opt_nn = torch.optim.AdamW(nnunet.parameters(), lr=args.lr, weight_decay=1e-5)
         sched_nn = torch.optim.lr_scheduler.CosineAnnealingLR(opt_nn, T_max=args.epochs, eta_min=1e-6)
         scaler_nn = torch.amp.GradScaler('cuda', enabled=use_amp)
         for _ in range(args.epochs):
@@ -357,6 +357,8 @@ def main():
             candidates = [
                 ssl_base_dir / f"best_{type_name}.pt",
                 ssl_base_dir / f"{type_name}_100pct.pt",
+                base_out / "checkpoints" / f"best_{type_name}.pt",
+                base_out / "checkpoints" / f"{type_name}_100pct.pt",
                 CHECKPOINTS_DIR / f"best_{type_name}.pt",
                 CHECKPOINTS_DIR / f"{type_name}_100pct.pt",
             ]

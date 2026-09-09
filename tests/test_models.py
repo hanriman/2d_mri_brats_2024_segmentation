@@ -68,6 +68,51 @@ def test_nnunet_forward(dummy_batch):
     assert out_eval.shape == (2, 1, 240, 240)
 
 
+def test_multiscale_segmentation_decoder_deep_supervision():
+    intermediates = [torch.randn(2, 225, 128) for _ in range(4)]
+    decoder = MultiScaleViTSegmentationDecoder(in_dim=128, out_channels=1, deep_supervision=True)
+    
+    decoder.train()
+    out_train = decoder(intermediates)
+    assert isinstance(out_train, list)
+    assert len(out_train) == 4
+    assert out_train[0].shape == (2, 1, 240, 240)
+    assert out_train[1].shape == (2, 1, 120, 120)
+    assert out_train[2].shape == (2, 1, 60, 60)
+    assert out_train[3].shape == (2, 1, 30, 30)
+
+    decoder.eval()
+    out_eval = decoder(intermediates)
+    assert isinstance(out_eval, torch.Tensor)
+    assert out_eval.shape == (2, 1, 240, 240)
+
+
+def test_jepa_segmentation_model_deep_supervision(dummy_batch):
+    images = dummy_batch["image"]
+    model = JEPASegmentationModel(
+        img_size=240,
+        patch_size=16,
+        in_channels=4,
+        embed_dim=128,
+        encoder_depth=2,
+        num_heads=4,
+        out_channels=1,
+        decoder_type="multiscale",
+        deep_supervision=True,
+    )
+    model.train()
+    out_train = model(images)
+    assert isinstance(out_train, list)
+    assert len(out_train) == 4
+    assert out_train[0].shape == (2, 1, 240, 240)
+
+    model.eval()
+    out_eval = model(images)
+    assert isinstance(out_eval, torch.Tensor)
+    assert out_eval.shape == (2, 1, 240, 240)
+
+
+
 def test_jepa_predictor_heterogeneous_shapes():
     B, N_ctx, N_tgt, D = 3, 50, 15, 128
     predictor = JEPAPredictor(num_patches=225, embed_dim=D, pred_embed_dim=D, depth=2, num_heads=4)

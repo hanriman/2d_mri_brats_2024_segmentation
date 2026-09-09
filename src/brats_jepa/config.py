@@ -117,19 +117,57 @@ def ensure_directories(base_output_dir: Path | str | None = None):
         directory.mkdir(parents=True, exist_ok=True)
 
 
-def merge_config_with_args(config: dict[str, Any], args: Any) -> Any:
+def merge_config_with_args(
+    config: dict[str, Any],
+    args: Any,
+    cli_args: list[str] | None = None,
+) -> Any:
     """
-    Merges a loaded YAML configuration dictionary with argparse Namespace.
-    Command-line arguments take precedence over YAML defaults.
+    Merges a loaded YAML configuration dictionary with an argparse Namespace.
+    Explicit command-line arguments take precedence over YAML values, which in turn
+    override parser default values.
     """
+    if cli_args is None:
+        cli_args = sys.argv[1:]
+
+    # Extract flags explicitly passed on the command line
+    explicit_cli_flags: set[str] = set()
+    for arg in cli_args:
+        if arg.startswith("--"):
+            flag = arg.lstrip("-").split("=")[0].replace("-", "_")
+            explicit_cli_flags.add(flag)
+            if flag.startswith("no_"):
+                explicit_cli_flags.add(flag[3:])
+        elif arg.startswith("-"):
+            flag = arg.lstrip("-").split("=")[0].replace("-", "_")
+            explicit_cli_flags.add(flag)
+
     args_dict = vars(args) if hasattr(args, "__dict__") else args
+
+    def apply_kv(key: str, val: Any) -> None:
+        target_keys = [key]
+        if key == "name":
+            target_keys.append("model_type")
+        elif key == "model_type":
+            target_keys.append("name")
+
+        # If any corresponding key was explicitly set on the CLI, do not override
+        if any(k in explicit_cli_flags for k in target_keys):
+            return
+
+        for k in target_keys:
+            if hasattr(args, k) or (isinstance(args_dict, dict) and k in args_dict):
+                setattr(args, k, val)
+        setattr(args, key, val)
+
     for k, v in config.items():
         if isinstance(v, dict):
             for sub_k, sub_v in v.items():
-                if sub_k in args_dict and args_dict[sub_k] is None:
-                    setattr(args, sub_k, sub_v)
+                apply_kv(sub_k, sub_v)
+            setattr(args, k, v)
         else:
-            if k in args_dict and args_dict[k] is None:
-                setattr(args, k, v)
+            apply_kv(k, v)
+
     return args
+
 

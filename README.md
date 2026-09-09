@@ -74,7 +74,7 @@ thesis_2d/
 │   ├── generate_figures.py    # Publication plot generator
 │   └── run_full_pipeline.py   # Master automation pipeline runner with versioning support
 │
-├── tests/                     # Automated pytest suite (18 tests passing)
+├── tests/                     # Automated pytest suite (55+ tests passing)
 │   ├── conftest.py
 │   ├── test_data.py
 │   ├── test_models.py
@@ -195,4 +195,4 @@ A standalone runner notebook is available at [`notebooks/kaggle_runner.ipynb`](n
 ```bash
 uv run pytest -v
 ```
-All 48 automated unit tests pass in < 3 seconds, verifying mathematical correctness of Epps-Pulley, Sliced-Wasserstein, Dice+BCE, Deep Supervision, model forward/backward graphs, contiguous masking transforms, and metrics.
+All 55+ automated unit tests pass in < 3 seconds, verifying mathematical correctness of Epps-Pulley, Sliced-Wasserstein, Dice+BCE, Deep Supervision, model forward/backward graphs, contiguous masking transforms, and metrics.

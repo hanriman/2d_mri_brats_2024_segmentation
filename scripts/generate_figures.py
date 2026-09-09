@@ -76,6 +76,8 @@ def main():
             plt.savefig(out_fig1, dpi=300)
             plt.close()
             print(f"Generated figure: {out_fig1}")
+    else:
+        print(f"Notice: evaluation_benchmark_summary.csv not found in {metrics_dir}. Skipping downstream segmentation summary plot.")
 
     # 2. Representation Collapse Benchmark Plot
     if df is not None and not df.empty and "effective_rank" in df.columns and "avg_cosine_sim" in df.columns:
@@ -123,6 +125,8 @@ def main():
             plt.savefig(out_fig_ld, dpi=300)
             plt.close()
             print(f"Generated figure: {out_fig_ld}")
+    else:
+        print(f"Notice: low_data_benchmark_summary.csv not found in {metrics_dir}. Skipping low-data efficiency plot.")
 
     # 4. Out-of-Distribution (OOD) Scanner Generalization Plot
     ood_csv = resolve_summary_csv("ood_benchmark_summary.csv")
@@ -145,6 +149,8 @@ def main():
             plt.savefig(out_fig_ood, dpi=300)
             plt.close()
             print(f"Generated figure: {out_fig_ood}")
+    else:
+        print(f"Notice: ood_benchmark_summary.csv not found in {metrics_dir}. Skipping OOD scanner plot.")
 
     # 5. BraTS-MEN-RT Cross-Pathology & Missing-Modality OOD Plot
     men_ood_csv = resolve_summary_csv("men_rt_ood_benchmark_summary.csv")
@@ -167,6 +173,8 @@ def main():
             plt.savefig(out_fig_men, dpi=300)
             plt.close()
             print(f"Generated figure: {out_fig_men}")
+    else:
+        print(f"Notice: men_rt_ood_benchmark_summary.csv not found in {metrics_dir}. Skipping BraTS-MEN-RT plot.")
 
 if __name__ == "__main__":
     main()

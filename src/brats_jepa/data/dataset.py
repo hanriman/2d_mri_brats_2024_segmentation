@@ -82,8 +82,15 @@ class BraTS2DDataset(Dataset):
         if self.cache_in_memory and idx in self._cache:
             image, mask = self._cache[idx]
         else:
-            file_name = Path(record["file_path"]).name
-            npz_path = self.data_root / file_name
+            raw_path = Path(record["file_path"])
+            if raw_path.is_absolute() and raw_path.exists():
+                npz_path = raw_path
+            elif (self.data_root / raw_path).exists():
+                npz_path = self.data_root / raw_path
+            elif (self.data_root / raw_path.name).exists():
+                npz_path = self.data_root / raw_path.name
+            else:
+                npz_path = self.data_root / raw_path.name
             data = np.load(str(npz_path))
             image = data["image"]  # shape: [4, H, W] (T1, T1c, T2, FLAIR)
             mask = data["mask"]    # shape: [H, W] (BraTS discrete tumor labels 0,1,2,3)
@@ -108,7 +115,7 @@ class BraTS2DDataset(Dataset):
             "image": image_tensor,
             "label": label_tensor,
             "patient_id": patient_id,
-            "slice_index": record["slice_index"],
+            "slice_index": record.get("slice_index", record.get("slice_idx", idx)),
         }
         
         if self.jepa_masking is not None:

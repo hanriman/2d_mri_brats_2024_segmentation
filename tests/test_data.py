@@ -155,3 +155,42 @@ def test_jepa_masking_contiguity():
     assert connected_count / len(coords) >= 0.90
 
 
+def test_brats_dataset_nested_path_resolution(tmp_path):
+    """Verify that BraTS2DDataset correctly loads slices stored in subdirectories or absolute paths."""
+    import numpy as np
+    import pandas as pd
+
+    sub_dir = tmp_path / "nested_slices"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+
+    npz_nested = sub_dir / "slice_nested.npz"
+    np.savez_compressed(
+        str(npz_nested),
+        image=np.ones((4, 240, 240), dtype=np.float32),
+        mask=np.zeros((240, 240), dtype=np.float32),
+    )
+
+    metadata = pd.DataFrame([
+        {
+            "patient_id": "P01",
+            "split": "train",
+            "file_path": "nested_slices/slice_nested.npz",
+        },
+        {
+            "patient_id": "P02",
+            "split": "train",
+            "file_path": str(npz_nested.resolve()),
+        },
+    ])
+    csv_path = tmp_path / "metadata.csv"
+    metadata.to_csv(csv_path, index=False)
+
+    ds = BraTS2DDataset(metadata_csv=csv_path, split="train")
+    assert len(ds) == 2
+    s0 = ds[0]
+    s1 = ds[1]
+    assert s0["image"].shape == (4, 240, 240)
+    assert s1["image"].shape == (4, 240, 240)
+
+
+

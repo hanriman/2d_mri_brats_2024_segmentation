@@ -17,7 +17,7 @@ from brats_jepa.config import (
     merge_config_with_args,
 )
 from brats_jepa.data import BraTS2DDataset, RandomModalityDropout
-from brats_jepa.losses import CombinedDiceBCELoss
+from brats_jepa.losses import CombinedDiceBCELoss, DeepSupervisionLoss
 from brats_jepa.metrics import compute_segmentation_metrics
 from brats_jepa.models import JEPASegmentationModel
 from brats_jepa.utils import MetricTracker, get_device, get_logger, set_seed
@@ -49,6 +49,8 @@ def parse_args():
     parser.add_argument("--device", type=str, default="auto", help="Device")
     parser.add_argument("--decoder_type", type=str, choices=["bottleneck", "multiscale"], default="bottleneck",
                         help="Downstream decoder architecture: standard bottleneck or hierarchical multiscale feature pyramid")
+    parser.add_argument("--deep_supervision", action="store_true", default=False,
+                        help="Enable multi-scale deep supervision when using multiscale decoder")
     parser.add_argument("--encoder_source", type=str, choices=["target", "context"], default="target",
                         help="Source encoder weights to load from pre-trained checkpoint: target (EMA teacher) or context (online student)")
     parser.add_argument("--max_batches", type=int, default=None, help="Limit batches per epoch for quick local smoke testing")
@@ -82,7 +84,7 @@ def main():
         metrics_dir = METRICS_DIR
     ensure_directories(base_out)
 
-    src_ckpt_dir = Path(args.checkpoint_dir).resolve() if args.checkpoint_dir else CHECKPOINTS_DIR
+    src_ckpt_dir = Path(args.checkpoint_dir).resolve() if args.checkpoint_dir else ckpt_dir
 
     logger = get_logger(f"train_downstream_{args.model_type}", logs_dir / f"train_downstream_{args.model_type}.log")
     logger.info(f"Starting downstream segmentation training for {args.model_type.upper()} on device: {device} (Freeze Encoder: {args.freeze_encoder})")
@@ -115,6 +117,7 @@ def main():
     )
 
     # Instantiate downstream model
+    use_deep_supervision = getattr(args, "deep_supervision", False) and (args.decoder_type == "multiscale")
     model = JEPASegmentationModel(
         img_size=240,
         patch_size=16,
@@ -123,13 +126,18 @@ def main():
         out_channels=1,
         freeze_encoder=args.freeze_encoder,
         decoder_type=args.decoder_type,
+        deep_supervision=use_deep_supervision,
     ).to(device)
 
     # Load pre-trained encoder weights if available
     if args.pretrained_ckpt:
         pretrained_ckpt = Path(args.pretrained_ckpt).resolve()
     else:
-        pretrained_ckpt = src_ckpt_dir / f"best_{args.model_type}.pt"
+        candidates = [
+            src_ckpt_dir / f"best_{args.model_type}.pt",
+            CHECKPOINTS_DIR / f"best_{args.model_type}.pt",
+        ]
+        pretrained_ckpt = next((c for c in candidates if c.exists()), candidates[0])
     if pretrained_ckpt.exists():
         logger.info(f"Loading pre-trained {args.model_type} encoder from {pretrained_ckpt}...")
         ckpt = torch.load(pretrained_ckpt, map_location=device)
@@ -139,7 +147,7 @@ def main():
     else:
         logger.warning(f"Pre-trained checkpoint {pretrained_ckpt} not found! Initializing with random weights.")
 
-    loss_fn = CombinedDiceBCELoss(dice_weight=1.0, bce_weight=1.0)
+    loss_fn = DeepSupervisionLoss() if use_deep_supervision else CombinedDiceBCELoss(dice_weight=1.0, bce_weight=1.0)
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 

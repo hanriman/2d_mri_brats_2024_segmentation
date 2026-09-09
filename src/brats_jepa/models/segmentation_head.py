@@ -218,7 +218,7 @@ class MultiScaleViTSegmentationDecoder(nn.Module):
         x4 = self.up4(x3)
         out = self.head(x4)
 
-        if self.deep_supervision:
+        if self.deep_supervision and self.training:
             return [out, self.ds3(x3), self.ds2(x2), self.ds1(x1)]
         return out
 
@@ -254,6 +254,7 @@ class JEPASegmentationModel(nn.Module):
         out_channels: int = 1,
         freeze_encoder: bool = False,
         decoder_type: str = "bottleneck",
+        deep_supervision: bool = False,
     ):
         super().__init__()
         self.encoder = VisionTransformerEncoder2D(
@@ -265,8 +266,13 @@ class JEPASegmentationModel(nn.Module):
             num_heads=num_heads,
         )
         self.decoder_type = decoder_type
+        self.deep_supervision = deep_supervision
         if decoder_type == "multiscale":
-            self.decoder = MultiScaleViTSegmentationDecoder(in_dim=embed_dim, out_channels=out_channels)
+            self.decoder = MultiScaleViTSegmentationDecoder(
+                in_dim=embed_dim,
+                out_channels=out_channels,
+                deep_supervision=deep_supervision,
+            )
         else:
             self.decoder = ViTSegmentationDecoder(in_dim=embed_dim, out_channels=out_channels)
             

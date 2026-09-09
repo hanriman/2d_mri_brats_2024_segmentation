@@ -181,7 +181,7 @@ def main():
     else:
         base_out = root_out
 
-    ckpt_dir = Path(args.checkpoint_dir).resolve() if args.checkpoint_dir else (base_out / "checkpoints" if args.exp_version else CHECKPOINTS_DIR)
+    ckpt_dir = Path(args.checkpoint_dir).resolve() if args.checkpoint_dir else (base_out / "checkpoints" if (args.output_dir or args.exp_version) else CHECKPOINTS_DIR)
     metrics_dir = base_out / "metrics"
     logs_dir = base_out / "logs"
     for d in [base_out, ckpt_dir, metrics_dir, logs_dir]:
@@ -214,9 +214,13 @@ def main():
     results = []
 
     # 1. Evaluate Supervised UNet Baseline
-    unet_ckpt = ckpt_dir / "best_unet.pt"
-    if not unet_ckpt.exists():
-        unet_ckpt = ckpt_dir / "unet_100pct.pt"
+    unet_candidates = [
+        ckpt_dir / "best_unet.pt",
+        ckpt_dir / "unet_100pct.pt",
+        CHECKPOINTS_DIR / "best_unet.pt",
+        CHECKPOINTS_DIR / "unet_100pct.pt",
+    ]
+    unet_ckpt = next((c for c in unet_candidates if c.exists()), unet_candidates[0])
 
     if unet_ckpt.exists():
         logger.info(f"Evaluating standard UNet baseline from {unet_ckpt.name}...")
@@ -254,9 +258,13 @@ def main():
         })
 
     # 2. Evaluate Supervised SOTA 2D nnU-Net Baseline
-    nnunet_ckpt = ckpt_dir / "best_nnunet.pt"
-    if not nnunet_ckpt.exists():
-        nnunet_ckpt = ckpt_dir / "nnunet_100pct.pt"
+    nnunet_candidates = [
+        ckpt_dir / "best_nnunet.pt",
+        ckpt_dir / "nnunet_100pct.pt",
+        CHECKPOINTS_DIR / "best_nnunet.pt",
+        CHECKPOINTS_DIR / "nnunet_100pct.pt",
+    ]
+    nnunet_ckpt = next((c for c in nnunet_candidates if c.exists()), nnunet_candidates[0])
 
     if nnunet_ckpt.exists():
         logger.info(f"Evaluating 2D nnU-Net baseline from {nnunet_ckpt.name}...")
@@ -302,9 +310,13 @@ def main():
     }
 
     for name, (type_name, ssl_model_cls) in jepa_variants.items():
-        finetuned_ckpt = ckpt_dir / f"best_finetuned_{type_name}.pt"
-        if not finetuned_ckpt.exists():
-            finetuned_ckpt = ckpt_dir / f"finetuned_{type_name}_100pct.pt"
+        finetuned_candidates = [
+            ckpt_dir / f"best_finetuned_{type_name}.pt",
+            ckpt_dir / f"finetuned_{type_name}_100pct.pt",
+            CHECKPOINTS_DIR / f"best_finetuned_{type_name}.pt",
+            CHECKPOINTS_DIR / f"finetuned_{type_name}_100pct.pt",
+        ]
+        finetuned_ckpt = next((c for c in finetuned_candidates if c.exists()), finetuned_candidates[0])
 
         ssl_ckpt = ckpt_dir / f"best_{type_name}.pt"
         if not ssl_ckpt.exists():

@@ -19,7 +19,7 @@ This guide provides an end-to-end walkthrough for running the entire **BraTS 2D 
 
 ```text
 [Local Machine]
-  scripts/package_for_kaggle.py --data_only
+  scripts/package_for_kaggle.py
       │
       └── dist_kaggle/brats_2d_datasets.zip (1.6 GB)
               │
@@ -50,16 +50,16 @@ This guide provides an end-to-end walkthrough for running the entire **BraTS 2D 
 
 ### Step 1: Package Local Dataset
 
-Run the automated packaging script for data:
+Run the automated packaging script:
 
 ```bash
-uv run python scripts/package_for_kaggle.py --data_only
+uv run python scripts/package_for_kaggle.py
 ```
 
 This creates the upload-ready dataset archive:
 - **`dist_kaggle/brats_2d_datasets.zip`** (~1.6 GB): Slices and metadata for `brats_gli_2d` (9,046 slices) and `brats_men_rt_2d` (2,856 slices).
 
-*(Note: You do NOT need to upload code, because the Kaggle runner clones directly from your GitHub repository!)*
+*(Note: Code is not packaged into a zip file. The Kaggle runner clones directly from your public GitHub repository!)*
 
 ---
 

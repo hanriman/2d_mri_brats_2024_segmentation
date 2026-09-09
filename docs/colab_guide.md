@@ -56,10 +56,10 @@ Google Drive (/content/drive/MyDrive/)
 2. **Package & Upload Dataset:**
    Package the datasets:
    ```bash
-   uv run python scripts/package_for_kaggle.py --data_only
+   uv run python scripts/package_for_kaggle.py
    ```
    Upload `dist_kaggle/brats_2d_datasets.zip` (~1.6 GB) to your **Google Drive** (`MyDrive/`).
-   *(You do NOT need to upload code to Google Drive, since Colab will git clone directly from GitHub!)*
+   *(Code is not zipped; Colab will clone directly from your public GitHub repository!)*
 
 ---
 
